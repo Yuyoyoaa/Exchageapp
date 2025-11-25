@@ -2,6 +2,8 @@ package utils
 
 import (
 	"errors"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -53,4 +55,18 @@ func ParseJWT(tokenString string) (string, error) {
 		return username, nil
 	}
 	return "", err
+}
+
+// ValidatePassword 校验密码复杂度
+func ValidatePassword(pwd string) bool {
+	pwd = strings.TrimSpace(pwd) // 去掉首尾空格
+	if len(pwd) < 8 {
+		return false
+	}
+	var (
+		hasUpper = regexp.MustCompile(`[A-Z]`).MatchString
+		hasLower = regexp.MustCompile(`[a-z]`).MatchString
+		hasDigit = regexp.MustCompile(`\d`).MatchString
+	)
+	return hasUpper(pwd) && hasLower(pwd) && hasDigit(pwd)
 }

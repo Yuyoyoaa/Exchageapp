@@ -23,6 +23,7 @@ func SetupRouter() *gin.Engine {
 		MaxAge:           12 * time.Hour, /// 12小时内不再进行预检请求，直接发起跨域请求
 	}))
 
+	// 用户注册与登录
 	auth := r.Group("/api/auth")
 	{
 		auth.POST("/login", controllers.Login)
@@ -42,5 +43,14 @@ func SetupRouter() *gin.Engine {
 		api.POST("/articles/:id/like", controllers.LikeArticle)
 		api.GET("/articles/:id/like", controllers.GetArticleLikes)
 	}
+
+	// 用户信息获取与更新接口
+	user := api.Group("/user")
+	user.Use(middlewares.AuthMiddleWare())
+	{
+		user.GET("/profile", controllers.GetProfile)
+		user.PUT("/profile", controllers.UpdateProfile)
+	}
+
 	return r
 }

@@ -5,58 +5,76 @@ import (
 	"exchangeapp/models"
 	"exchangeapp/utils"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-func Register(ctx *gin.Context) { // ctx包括请求和响应的上下文信息
-	var user models.User
+func Register(ctx *gin.Context) {
+	var input struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Role     string `json:"role"` // 可选
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+	}
 
-	// 自动解析请求体中的 JSON 数据,将 JSON 字段映射到结构体的对应字段
-	if err := ctx.ShouldBindJSON(&user); err != nil {
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !utils.ValidatePassword(input.Password) {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"error": "密码至少8位，必须包含大写字母、小写字母和数字",
 		})
 		return
 	}
 
-	// 密码加密
-	hashedPwd, err := utils.HashPassword(user.Password)
+	hashedPwd, err := utils.HashPassword(input.Password)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	user.Password = hashedPwd
+	user := models.User{
+		Username: input.Username,
+		Password: hashedPwd,
+		Role:     input.Role,
+		Nickname: input.Nickname,
+		Email:    input.Email,
+		Avatar:   input.Avatar,
+	}
 
-	// 生成令牌
+	if user.Role == "" {
+		user.Role = "user"
+	}
+
+	// 检查用户名和邮箱是否已存在
+	var existingUser models.User
+	if err := global.Db.Where("username = ? OR email = ?", user.Username, user.Email).First(&existingUser).Error; err == nil {
+		if existingUser.Username == user.Username {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "用户名已存在"})
+		} else {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "邮箱已存在"})
+		}
+		return
+	}
+
+	if err := global.Db.Create(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	token, err := utils.GenerateJWT(user.Username)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 自动迁移数据库结构(根据 Go 结构体自动创建或更新数据库表结构)
-	if err := global.Db.AutoMigrate(&user); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// 创建数据记录
-	if err := global.Db.Create(&user).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"token": token})
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, gin.H{"token": token, "user": user})
 }
 
 func Login(ctx *gin.Context) {
@@ -83,12 +101,25 @@ func Login(ctx *gin.Context) {
 		return
 	}
 
+	key := "login_fail:" + input.Username
+	failCount, _ := global.RedisDB.Get(ctx, key).Int()
+	if failCount >= 5 {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "尝试次数过多，请15分钟后再试"})
+		return
+	}
+
 	if !utils.CheckPassword(input.Password, user.Password) {
+		// 登录失败时
+		global.RedisDB.Incr(ctx, key)
+		global.RedisDB.Expire(ctx, key, time.Minute*15)
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "wrong credentials",
 		})
 		return
 	}
+
+	// 登录成功，删除失败计数
+	global.RedisDB.Del(ctx, key)
 
 	token, err := utils.GenerateJWT(user.Username)
 	if err != nil {
@@ -99,4 +130,67 @@ func Login(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// 新增获取/更新用户信息接口
+func GetProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, user)
+}
+
+func UpdateProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+
+	var input struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+		Password string `json:"password"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	if input.Nickname != "" {
+		user.Nickname = input.Nickname
+	}
+
+	if input.Email != "" {
+		user.Email = input.Email
+	}
+
+	if input.Avatar != "" {
+		user.Avatar = input.Avatar
+	}
+
+	if input.Password != "" {
+		hashedPwd, err := utils.HashPassword(input.Password)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		user.Password = hashedPwd
+	}
+
+	if err := global.Db.Save(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user.Password = ""
+	ctx.JSON(http.StatusOK, user)
 }
