@@ -1,0 +1,2008 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+BackEnd/
+  config/
+    config.go
+    config.yml
+    db.go
+    redis.go
+  controllers/
+    article_controllers.go
+    auth_controllers.go
+    exchange_rate_controllers.go
+    like_controllers.go
+  global/
+    global.go
+  middlewares/
+    auth_middlewares.go
+    role_middlewares.go
+  models/
+    article.go
+    exchange_rate.go
+    user.go
+  router/
+    router.go
+  utils/
+    utils.go
+  .prettierrc.json
+  Dockerfile
+  go.mod
+  main.go
+FrontEnd/
+  src/
+    components/
+      Login.vue
+      Register.vue
+    router/
+      index.ts
+    store/
+      auth.ts
+    types/
+      Article.d.ts
+    views/
+      CurrencyExchangeView.vue
+      HomeView.vue
+      NewsDetailView.vue
+      NewsView.vue
+    App.vue
+    axios.ts
+    main.ts
+    shims-vue.d.ts
+    vite-env.d.ts
+  __VLS_types.d.ts
+  index.html
+  package.json
+  tsconfig.json
+  tsconfig.node.json
+  vite.config.ts
+docker-compose.yml
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="BackEnd/config/config.go">
+package config
+
+import (
+	"log"
+
+	"github.com/spf13/viper"
+)
+
+// 将配置文件赋值给自定义的结构体
+type Config struct {
+	App struct {
+		Name string `yaml:"name"`
+		Port string `yaml:"port"`
+	} `yaml:"app"`
+	Database struct {
+		Dsn          string `yaml:"dsn"`
+		MaxIdleCONNS int    `yaml:"MaxIdleCONNS"`
+		MaxOpenCONNS int    `yaml:"MaxOpenCONNS"`
+	}
+	Redis struct {
+		Addr     string `yaml:"addr"`
+		Password string `yaml:"password"`
+		DB       int    `yaml:"db"`
+	} `yaml:"redis"`
+}
+
+var AppConfig *Config
+
+func InitConfig() {
+	viper.SetConfigName("config")
+	viper.SetConfigType("yml")
+	viper.AddConfigPath("./config")
+
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("Error Reading Config file: %v", err)
+	}
+
+	AppConfig = &Config{}
+
+	if err := viper.Unmarshal(AppConfig); err != nil {
+		log.Fatalf("Unable to decode into struct: %v", err)
+	}
+
+	InitDB()
+	InitRedis()
+}
+</file>
+
+<file path="BackEnd/config/config.yml">
+app:
+  name: 'CurrencyExchangeApp'
+  port: '3080'
+
+database:
+  dsn: 'root:123@tcp(mysql:3306)/exchangeApp?charset=utf8mb4&parseTime=True&loc=Local'
+  MaxIdleCONNS: 10
+  MaxOpenCONNS: 100
+
+redis:
+  addr: 'redis:6379'
+  password: ''
+  db: 0
+</file>
+
+<file path="BackEnd/config/db.go">
+package config
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"fmt"
+	"log"
+	"time"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func InitDB() {
+	dsn := AppConfig.Database.Dsn
+	fmt.Println("DSN:", dsn)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to initialize database, got error: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("Failed to configure database, got error: %v", err)
+	}
+
+	sqlDB.SetMaxIdleConns(AppConfig.Database.MaxIdleCONNS)
+	sqlDB.SetMaxOpenConns(AppConfig.Database.MaxOpenCONNS)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	global.Db = db
+
+	// 迁移模型
+	if err := global.Db.AutoMigrate(&models.User{}); err != nil {
+		log.Fatalf("Failed to migrate database, got error: %v", err)
+	}
+
+	fmt.Println("Database initialized and migrated successfully")
+}
+</file>
+
+<file path="BackEnd/config/redis.go">
+package config
+
+import (
+	"context"
+	"exchangeapp/global"
+	"log"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func InitRedis() {
+	ctx := context.Background()
+	RedisClient := redis.NewClient(&redis.Options{
+		Addr:     AppConfig.Redis.Addr,
+		Password: AppConfig.Redis.Password,
+		DB:       AppConfig.Redis.DB,
+	})
+
+	_, err := RedisClient.Ping(ctx).Result()
+
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis,got error: %v", err)
+	}
+
+	global.RedisDB = RedisClient
+}
+</file>
+
+<file path="BackEnd/controllers/article_controllers.go">
+package controllers
+
+import (
+	"encoding/json"
+	"errors"
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+)
+
+var cacheKey = "articles"
+
+func CreateArticle(ctx *gin.Context) {
+	var article models.Article
+
+	if err := ctx.ShouldBindJSON(&article); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := global.Db.AutoMigrate(&article); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := global.Db.Create(&article).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 在新增文章以后，删除旧缓存，让下次读取时强制从数据库刷新数据
+	if err := global.RedisDB.Del(ctx.Request.Context(), cacheKey).Err(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, article)
+}
+
+func GetArticles(ctx *gin.Context) {
+	cachedData, err := global.RedisDB.Get(ctx.Request.Context(), cacheKey).Result()
+
+	// 未命中缓存
+	if err == redis.Nil {
+		var articles []models.Article
+
+		// 查询数据库
+		if err := global.Db.Find(&articles).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			} else {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+
+		// 将文章序列号为json
+		articleJSON, err := json.Marshal(articles)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// 写入缓存
+		if err := global.RedisDB.Set(ctx.Request.Context(), cacheKey, articleJSON, 10*time.Minute).Err(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, articles) // 返回客户端
+		return
+	}
+
+	// 其他 Redis 错误
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 命中缓存
+	var articles []models.Article
+	if err := json.Unmarshal([]byte(cachedData), &articles); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, articles)
+}
+
+func GetArticleByID(ctx *gin.Context) {
+	// 获取路径的参数
+	id := ctx.Param("id")
+
+	var article models.Article
+
+	if err := global.Db.Where("id = ?", id).First(&article).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) { // 错误匹配
+			ctx.JSON(http.StatusNotFound, gin.H{
+				"error": err.Error(),
+			})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, article)
+}
+</file>
+
+<file path="BackEnd/controllers/auth_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"exchangeapp/utils"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func Register(ctx *gin.Context) {
+	var input struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Role     string `json:"role"` // 可选
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !utils.ValidatePassword(input.Password) {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "密码至少8位，必须包含大写字母、小写字母和数字",
+		})
+		return
+	}
+
+	hashedPwd, err := utils.HashPassword(input.Password)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user := models.User{
+		Username: input.Username,
+		Password: hashedPwd,
+		Role:     input.Role,
+		Nickname: input.Nickname,
+		Email:    input.Email,
+		Avatar:   input.Avatar,
+	}
+
+	if user.Role == "" {
+		user.Role = "user"
+	}
+
+	// 检查用户名和邮箱是否已存在
+	var existingUser models.User
+	if err := global.Db.Where("username = ? OR email = ?", user.Username, user.Email).First(&existingUser).Error; err == nil {
+		if existingUser.Username == user.Username {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "用户名已存在"})
+		} else {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "邮箱已存在"})
+		}
+		return
+	}
+
+	if err := global.Db.Create(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	token, err := utils.GenerateJWT(user.Username)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, gin.H{"token": token, "user": user})
+}
+
+func Login(ctx *gin.Context) {
+	// 登录过程的用户名和密码
+	var input struct {
+		Username string `json:"username"` // 结构体标签(方便将json字段映射到结构体)
+		Password string `json:"password"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var user models.User
+
+	// 验证用户名
+	if err := global.Db.Where("username = ?", input.Username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "wrong credentials",
+		})
+		return
+	}
+
+	key := "login_fail:" + input.Username
+	failCount, _ := global.RedisDB.Get(ctx, key).Int()
+	if failCount >= 5 {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "尝试次数过多，请15分钟后再试"})
+		return
+	}
+
+	if !utils.CheckPassword(input.Password, user.Password) {
+		// 登录失败时
+		global.RedisDB.Incr(ctx, key)
+		global.RedisDB.Expire(ctx, key, time.Minute*15)
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "wrong credentials",
+		})
+		return
+	}
+
+	// 登录成功，删除失败计数
+	global.RedisDB.Del(ctx, key)
+
+	token, err := utils.GenerateJWT(user.Username)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// 新增获取/更新用户信息接口
+func GetProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, user)
+}
+
+func UpdateProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+
+	var input struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+		Password string `json:"password"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	if input.Nickname != "" {
+		user.Nickname = input.Nickname
+	}
+
+	if input.Email != "" {
+		user.Email = input.Email
+	}
+
+	if input.Avatar != "" {
+		user.Avatar = input.Avatar
+	}
+
+	if input.Password != "" {
+		// 校验密码强度
+		if !utils.ValidatePassword(input.Password) {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error": "密码至少8位，必须包含大写字母、小写字母和数字",
+			})
+			return
+		}
+
+		hashedPwd, err := utils.HashPassword(input.Password)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		user.Password = hashedPwd
+	}
+
+	if err := global.Db.Save(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user.Password = ""
+	ctx.JSON(http.StatusOK, user)
+}
+</file>
+
+<file path="BackEnd/controllers/exchange_rate_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func CreateExchangeRate(ctx *gin.Context) {
+	var exchangeRate models.ExchangeRate
+
+	if err := ctx.ShouldBindJSON(&exchangeRate); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	exchangeRate.Date = time.Now()
+
+	if err := global.Db.AutoMigrate(&exchangeRate); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := global.Db.Create(&exchangeRate).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"message": "汇率创建成功",
+		"data":    exchangeRate,
+	})
+}
+
+func GetExchangeRates(ctx *gin.Context) {
+	var exchangeRates []models.ExchangeRate
+
+	if err := global.Db.Find(&exchangeRates).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	ctx.JSON(http.StatusOK, exchangeRates)
+}
+</file>
+
+<file path="BackEnd/controllers/like_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+func LikeArticle(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	likeKey := "article:" + articleID + ":likes"
+
+	if err := global.RedisDB.Incr(ctx.Request.Context(), likeKey).Err(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Successfully Like",
+	})
+}
+
+func GetArticleLikes(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	likeKey := "article:" + articleID + ":likes"
+
+	likes, err := global.RedisDB.Get(ctx.Request.Context(), likeKey).Result()
+
+	if err == redis.Nil { // key不存在
+		likes = "0"
+	} else if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"likes": likes,
+	})
+}
+</file>
+
+<file path="BackEnd/global/global.go">
+package global
+
+import (
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+)
+
+// 全局变量
+var (
+	Db      *gorm.DB
+	RedisDB *redis.Client
+)
+</file>
+
+<file path="BackEnd/middlewares/auth_middlewares.go">
+package middlewares
+
+import (
+	"exchangeapp/utils"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 验证JWT是否有效
+
+func AuthMiddleWare() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		token := ctx.GetHeader("Authorization")
+		if token == "" {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authorization header is required",
+			})
+			ctx.Abort() // 阻止后续的中间件和处理函数执行,但不会中断当前函数中 ctx.Abort()之后的代码执行
+			return
+		}
+		username, err := utils.ParseJWT(token)
+
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token: " + err.Error(),
+			})
+			ctx.Abort()
+			return
+		}
+
+		ctx.Set("username", username) // 用于在不同中间件传递kv数据
+		ctx.Next()
+
+	}
+}
+</file>
+
+<file path="BackEnd/middlewares/role_middlewares.go">
+package middlewares
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 检查角色
+func AdminMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		username, exists := ctx.Get("username")
+		if !exists {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.Abort()
+			return
+		}
+		var user models.User
+		if err := global.Db.Where("username = ?", username.(string)).First(&user).Error; err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+			ctx.Abort()
+			return
+		}
+		if user.Role != "admin" {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+			ctx.Abort()
+			return
+		}
+		ctx.Next()
+	}
+}
+</file>
+
+<file path="BackEnd/models/article.go">
+package models
+
+import "gorm.io/gorm"
+
+// 在mysql表格中都会变为小写
+type Article struct {
+	gorm.Model
+	Title   string `binding:"required"`
+	Content string `binding:"required"`
+	Preview string `binding:"required"` // 文字的预览
+	Likes   int    `gorm:"default:0"`
+}
+</file>
+
+<file path="BackEnd/models/exchange_rate.go">
+package models
+
+import "time"
+
+type ExchangeRate struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	FromCurrency string    `json:"fromCurrency" binding:"required"`
+	ToCurrency   string    `json:"toCurrency" binding:"required"`
+	Rate         float64   `json:"rate" binding:"required"`
+	Date         time.Time `json:"date"`
+}
+</file>
+
+<file path="BackEnd/models/user.go">
+package models
+
+import "gorm.io/gorm"
+
+type User struct {
+	gorm.Model
+	Username string `gorm:"unique" json:"username" binding:"required"`
+	Password string `json:"-" binding:"required"`
+	Role     string `gorm:"default:'user'" json:"role"` // user/admin
+	Nickname string `json:"nickname"`                   // 昵称
+	Email    string `gorm:"unique" json:"email"`        // 可为空，不强制验证
+	Avatar   string `json:"avatar"`                     // 头像
+}
+
+/*Role 默认是普通用户 user，管理员为 admin
+
+Password 不在 JSON 输出中显示（json:"-"）
+
+Nickname, Email, Avatar 可以为空 */
+</file>
+
+<file path="BackEnd/router/router.go">
+package router
+
+import (
+	"exchangeapp/controllers"
+	"exchangeapp/middlewares"
+	"time"
+
+	"github.com/gin-contrib/cors"
+
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRouter() *gin.Engine {
+	r := gin.Default()
+
+	// 允许跨域请求
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,           // 是否允许发送身份信息如cookie
+		MaxAge:           12 * time.Hour, /// 12小时内不再进行预检请求，直接发起跨域请求
+	}))
+
+	// 用户注册与登录
+	auth := r.Group("/api/auth")
+	{
+		auth.POST("/login", controllers.Login)
+		auth.POST("/register", controllers.Register)
+	}
+
+	api := r.Group("/api")
+	api.GET("/exchangeRates", controllers.GetExchangeRates)
+	// 使用中间件才能使用的api
+	api.Use(middlewares.AuthMiddleWare())
+	{
+		api.POST("/exchangeRates", controllers.CreateExchangeRate)
+		api.POST("/articles", controllers.CreateArticle)
+		api.GET("/articles", controllers.GetArticles)
+		api.GET("articles/:id", controllers.GetArticleByID)
+
+		api.POST("/articles/:id/like", controllers.LikeArticle)
+		api.GET("/articles/:id/like", controllers.GetArticleLikes)
+	}
+
+	// 用户信息获取与更新接口
+	user := api.Group("/user")
+	user.Use(middlewares.AuthMiddleWare())
+	{
+		user.GET("/profile", controllers.GetProfile)
+		user.PUT("/profile", controllers.UpdateProfile)
+	}
+
+	return r
+}
+</file>
+
+<file path="BackEnd/utils/utils.go">
+package utils
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt"
+	"golang.org/x/crypto/bcrypt"
+)
+
+func HashPassword(pwd string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func GenerateJWT(username string) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": username,
+		"exp":      time.Now().Add(time.Hour * 72).Unix(),
+	})
+
+	signedToken, err := token.SignedString([]byte("secret"))
+	return "Bearer " + signedToken, err
+}
+
+func CheckPassword(password string, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+func ParseJWT(tokenString string) (string, error) {
+	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
+		tokenString = tokenString[7:]
+	}
+
+	// 解析JWT
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected Signing Method")
+		}
+		return []byte("secret"), nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		username, ok := claims["username"].(string)
+		if !ok {
+			return "", errors.New("username claim is not a string")
+		}
+		return username, nil
+	}
+	return "", err
+}
+
+// ValidatePassword 校验密码复杂度
+func ValidatePassword(pwd string) bool {
+	pwd = strings.TrimSpace(pwd) // 去掉首尾空格
+	if len(pwd) < 8 {
+		return false
+	}
+	var (
+		hasUpper = regexp.MustCompile(`[A-Z]`).MatchString
+		hasLower = regexp.MustCompile(`[a-z]`).MatchString
+		hasDigit = regexp.MustCompile(`\d`).MatchString
+	)
+	return hasUpper(pwd) && hasLower(pwd) && hasDigit(pwd)
+}
+</file>
+
+<file path="BackEnd/.prettierrc.json">
+{
+  "printWidth": 200,
+  "tabWidth": 2,
+  "singleQuote": true,
+  "semi": true,
+  "trailingComma": "none",
+  "vueIndentScriptAndStyle": true 
+}
+</file>
+
+<file path="BackEnd/Dockerfile">
+# 使用官方 Go 镜像
+FROM golang:1.24-alpine
+
+# 安装必要工具（可选）
+RUN apk add --no-cache git bash
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制 Go Modules 文件并下载依赖
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制整个后端代码
+COPY . .
+
+# 编译 Go 程序
+RUN go build -o server ./main.go
+
+# 容器暴露端口
+EXPOSE 3080
+
+# 启动程序
+CMD ["./server"]
+</file>
+
+<file path="BackEnd/go.mod">
+module exchangeapp
+
+go 1.24.0
+
+toolchain go1.24.9
+
+require (
+	github.com/gin-gonic/gin v1.11.0
+	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/redis/go-redis/v9 v9.16.0
+	github.com/spf13/viper v1.21.0
+	golang.org/x/crypto v0.43.0
+	gorm.io/driver/mysql v1.6.0
+	gorm.io/gorm v1.31.1
+)
+
+require (
+	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/bytedance/gopkg v0.1.3 // indirect
+	github.com/bytedance/sonic v1.14.2 // indirect
+	github.com/bytedance/sonic/loader v0.4.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.11 // indirect
+	github.com/gin-contrib/cors v1.7.6
+	github.com/gin-contrib/sse v1.1.0 // indirect
+	github.com/go-playground/locales v0.14.1 // indirect
+	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.28.0 // indirect
+	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/goccy/go-yaml v1.18.0 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/quic-go/qpack v0.5.1 // indirect
+	github.com/quic-go/quic-go v0.55.0 // indirect
+	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ugorji/go/codec v1.3.1 // indirect
+	go.uber.org/mock v0.6.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/arch v0.22.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.46.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
+	google.golang.org/protobuf v1.36.10 // indirect
+)
+</file>
+
+<file path="BackEnd/main.go">
+package main
+
+import (
+	"context"
+	"exchangeapp/config"
+	"exchangeapp/router"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"strings"
+)
+
+func main() {
+	config.InitConfig()
+
+	r := router.SetupRouter()
+
+	// 确保端口号以冒号开头
+	port := config.AppConfig.App.Port
+
+	if port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	r.Run(port)
+
+	srv := &http.Server{ // http服务器实例
+		Addr:    port,
+		Handler: r,
+	}
+
+	// 启动服务器并且进行监听
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Listen: %s\n", err)
+		}
+	}()
+	log.Printf("Server started on port %v", port)
+
+	// 创建通道监听系统信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM) // 中断信号发送给quit
+	<-quit                                             // 阻塞主 goroutine，直到收到信号，程序才会继续执行后面的退出逻辑
+
+	log.Println("Shutting down server...") // 程序接收到中断信号后的处理
+
+	// 创建 5 秒超时上下文，正常情况下等待正在处理的请求完成，如果超过 5 秒仍未完成，则强制关闭
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel() // 函数退出时释放上下文资源
+
+	// 会停止接收新的请求
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %s", err)
+	}
+
+	log.Println("Server exiting")
+}
+</file>
+
+<file path="FrontEnd/src/components/Login.vue">
+<template>  
+  <div class="auth-container">  
+    <el-form :model="form" class="auth-form" @submit.prevent="login">  
+      <el-form-item label="用户名" label-width="80px">  
+        <el-input v-model="form.username" placeholder="请输入用户名" />  
+      </el-form-item>  
+      <el-form-item label="密码" label-width="80px">  
+        <el-input v-model="form.password" type="password" placeholder="请输入密码" />  
+      </el-form-item>  
+      <el-form-item>  
+        <el-button type="primary" native-type="submit">登录</el-button>  
+      </el-form-item>  
+    </el-form>  
+  </div>  
+</template>  
+  
+  <script setup lang="ts">
+  import { ref } from 'vue';
+  import { useRouter } from 'vue-router';
+  import { useAuthStore } from '../store/auth';
+  import { ElMessage } from 'element-plus';
+  
+  const form = ref({
+    username: '',
+    password: '',
+  });
+  
+  const authStore = useAuthStore();
+  const router = useRouter();
+  
+  const login = async () => {
+    try {
+      await authStore.login(form.value.username, form.value.password);
+      router.push({ name: 'News' });
+    } catch {
+      ElMessage.error('登录失败，请检查用户名和密码。');
+    }
+  };
+  </script>
+  
+  <style scoped>
+.auth-container {  
+  display: flex;  
+  justify-content: center;  
+  align-items: center;  
+  height: 100vh; 
+  background-color: #f5f5f5; 
+  padding: 20px;  
+  box-sizing: border-box; 
+}  
+  
+.auth-form {  
+  width: 100%;  
+  max-width: 360px; 
+  padding: 20px;  
+  background-color: #fff;  
+  border-radius: 4px;  
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);  
+}  
+  </style>
+</file>
+
+<file path="FrontEnd/src/components/Register.vue">
+<template>
+  <div class="auth-container">
+    <el-form :model="form" class="auth-form" @submit.prevent="register">
+      <el-form-item label="用户名" label-width="80px">
+        <el-input v-model="form.username" placeholder="请输入用户名" />
+      </el-form-item>
+      <el-form-item label="密码" label-width="80px">
+        <el-input v-model="form.password" type="password" placeholder="请输入密码" />
+      </el-form-item>
+      <el-button type="primary" native-type="submit">注册</el-button>
+    </el-form>
+  </div>
+  </template>
+  
+  <script setup lang="ts">
+  import { ref } from 'vue';
+  import { useRouter } from 'vue-router';
+  import { useAuthStore } from '../store/auth';
+  import { ElMessage } from 'element-plus';
+  
+  const form = ref({
+    username: '',
+    password: '',
+  });
+  
+  const authStore = useAuthStore();
+  const router = useRouter();
+  
+  const register = async () => {
+    try {
+      await authStore.register(form.value.username, form.value.password);
+      router.push({ name: 'News' });
+    } catch {
+      ElMessage.error('注册失败，请重试。');
+    }
+  };
+  </script>
+  
+  <style scoped>
+.auth-container {  
+  display: flex;  
+  justify-content: center;  
+  align-items: center;  
+  height: 100vh; 
+  background-color: #f5f5f5; 
+  padding: 20px;  
+  box-sizing: border-box; 
+}  
+  
+.auth-form {  
+  width: 100%;  
+  max-width: 360px; 
+  padding: 20px;  
+  background-color: #fff;  
+  border-radius: 4px;  
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);  
+}  
+  </style>
+</file>
+
+<file path="FrontEnd/src/router/index.ts">
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
+import HomeView from '../views/HomeView.vue';
+import CurrencyExchangeView from '../views/CurrencyExchangeView.vue';
+import NewsView from '../views/NewsView.vue';
+import NewsDetailView from '../views/NewsDetailView.vue';
+import Login from '../components/Login.vue';
+import Register from '../components/Register.vue';
+
+const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'Home', component: HomeView },
+  { path: '/exchange', name: 'CurrencyExchange', component: CurrencyExchangeView },
+  { path: '/news', name: 'News', component: NewsView },
+  { path: '/news/:id', name: 'NewsDetail', component: NewsDetailView },
+  { path: '/login', name: 'Login', component: Login },
+  { path: '/register', name: 'Register', component: Register },
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+});
+
+export default router;
+</file>
+
+<file path="FrontEnd/src/store/auth.ts">
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+import axios from '../axios';
+
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref<string | null>(localStorage.getItem('token'));
+
+  const isAuthenticated = computed(() => !!token.value);
+
+  const login = async (username: string, password: string) => {
+    try {
+      const response = await axios.post('/auth/login', { username, password });
+      token.value = response.data.token;
+      localStorage.setItem('token', token.value || '');
+    } catch (error) {
+      throw new Error(`Login failed! ${error}`);
+    }
+  };
+
+  const register = async (username: string, password: string) => {
+    try {
+      const response = await axios.post('/auth/register', { username, password });
+      token.value = response.data.token;
+      localStorage.setItem('token', token.value || '');
+    } catch (error) {
+      throw new Error(`Register failed! ${error}`);
+    }
+  };
+
+  const logout = () => {
+    token.value = null;
+    localStorage.removeItem('token');
+  };
+
+  return {
+    token,
+    isAuthenticated,
+    login,
+    register,
+    logout
+  };
+});
+</file>
+
+<file path="FrontEnd/src/types/Article.d.ts">
+export interface Article {
+    ID: string;
+    Title: string;
+    Preview: string;
+    Content: string;
+}
+
+export interface Like{
+    likes: number
+}
+</file>
+
+<file path="FrontEnd/src/views/CurrencyExchangeView.vue">
+<template>  
+  <el-container>  
+    <el-form :model="form" class="exchange-form">  
+      <el-form-item label="从货币" label-width="80px">  
+        <el-select v-model="form.fromCurrency" placeholder="选择货币">  
+          <el-option v-for="currency in currencies" :key="currency" :label="currency" :value="currency" />  
+        </el-select>  
+      </el-form-item>  
+      <el-form-item label="到货币" label-width="80px">  
+        <el-select v-model="form.toCurrency" placeholder="选择货币">  
+          <el-option v-for="currency in currencies" :key="currency" :label="currency" :value="currency" />  
+        </el-select>  
+      </el-form-item>  
+      <el-form-item label="金额" label-width="80px">  
+        <el-input v-model="form.amount" type="number" placeholder="输入金额" />  
+      </el-form-item>  
+      <el-form-item>  
+        <el-button type="primary" @click="exchange">兑换</el-button>  
+      </el-form-item>  
+    </el-form>  
+    <div v-if="result" class="result">  
+      <p>兑换结果: {{ result }}</p>  
+    </div>  
+  </el-container>  
+</template>  
+  
+  <script setup lang="ts">
+  import { ref, onMounted } from 'vue';
+  import axios from '../axios';
+  
+  interface ExchangeRate {
+    fromCurrency: string;
+    toCurrency: string;
+    rate: number;
+  }
+  
+  const form = ref({
+    fromCurrency: '',
+    toCurrency: '',
+    amount: 0,
+  });
+  
+  const result = ref<number | null>(null);
+  const currencies = ref<string[]>([]);
+  const rates = ref<ExchangeRate[]>([]);
+  
+  const fetchCurrencies = async () => {
+    try{
+      const response = await axios.get<ExchangeRate[]>('/exchangeRates');
+      rates.value = response.data;
+      currencies.value = [...new Set(response.data.map((rate: ExchangeRate) => [rate.fromCurrency, rate.toCurrency]).flat())];
+    }catch(error){
+      console.log('Failed to load currencies', error)
+    }
+  };
+  
+  const exchange = () => {
+    const rate = rates.value.find(
+      (rate) => rate.fromCurrency === form.value.fromCurrency && rate.toCurrency === form.value.toCurrency
+    )?.rate;
+  
+    if (rate) {
+      result.value = form.value.amount * rate;
+    } else {
+      result.value = null;
+    }
+  };
+  
+  onMounted(fetchCurrencies);
+  </script>
+  
+  <style scoped>
+  .exchange-form {  
+  width: 100%;  
+  max-width: 600px;  
+  margin: 20px auto;  
+  padding: 20px;  
+  background-color: #f5f5f5;  
+  border-radius: 4px;  
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);  
+}  
+  
+.result {  
+  margin-top: 20px;  
+  padding: 20px;  
+  background-color: #f0f0f0;  
+  border-radius: 4px;  
+  text-align: center;  
+  font-size: 18px;  
+}  
+  </style>
+</file>
+
+<file path="FrontEnd/src/views/HomeView.vue">
+<template>  
+  <el-container class="home-container">  
+    <div class="content-wrapper">  
+      <h1 class="title">欢迎使用蓝鼠兑换</h1>  
+      <p class="description">请选择上方的功能进行操作。</p>  
+    </div>  
+  </el-container>  
+</template>  
+  
+<script setup lang="ts">   
+</script>  
+  
+<style scoped>  
+.home-container {  
+  display: flex;  
+  justify-content: center;  
+  align-items: center;  
+  height: 100vh; 
+  background-color: #f5f5f5;
+  padding: 20px; 
+  box-sizing: border-box;
+}  
+  
+.content-wrapper {  
+  text-align: center;  
+  max-width: 800px; 
+}  
+  
+.title {  
+  color: #333;  
+  font-size: 36px;  
+  font-weight: bold;  
+  margin-bottom: 20px;   
+}  
+  
+.description {  
+  color: #666;  
+  font-size: 18px; 
+  line-height: 1.5;  
+}  
+</style>
+</file>
+
+<file path="FrontEnd/src/views/NewsDetailView.vue">
+<template>
+  <el-container>
+    <el-main>
+      <el-card v-if="article" class="article-detail">
+        <h1>{{ article.Title }}</h1>
+        <p>{{ article.Content }}</p>
+        <div>
+          <el-button type="primary" @click="likeArticle">点赞</el-button>
+          <p>点赞数: {{ likes }}</p>
+        </div>
+      </el-card>
+      <div v-else class="no-data">您必须登录/注册才可以阅读文章</div>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onUpdated, onBeforeUpdate, onBeforeMount } from "vue";
+import { useRoute } from "vue-router";
+import axios from "../axios";
+import type { Article, Like } from "../types/Article";
+
+const article = ref<Article | null>(null);
+const route = useRoute();
+const likes = ref<number>(0)
+
+const { id } = route.params;
+
+const fetchArticle = async () => {
+  try {
+    const response = await axios.get<Article>(`/articles/${id}`);
+    article.value = response.data;
+  } catch (error) {
+    console.error("Failed to load article:", error);
+  }
+};
+
+const likeArticle = async () => {
+  try {
+    const res = await axios.post<Like>(`articles/${id}/like`)
+    likes.value = res.data.likes
+    await fetchLike()
+  } catch (error) {
+    console.log('Error Liking article:', error)
+  }
+};
+
+const fetchLike = async ()=>{
+  try{
+    const res = await axios.get<Like>(`articles/${id}/like`)
+    likes.value = res.data.likes
+  }catch(error){
+    console.log('Error fetching likes:', error)
+  }
+}
+
+onMounted(fetchArticle);
+onMounted(fetchLike)
+</script>
+
+<style scoped>
+.article-detail {
+  margin: 20px 0;
+}
+
+.no-data {
+  text-align: center;
+  font-size: 1.2em;
+  color: #999;
+}
+</style>
+</file>
+
+<file path="FrontEnd/src/views/NewsView.vue">
+<template>
+  <el-container>
+    <el-main>
+      <div v-if="articles && articles.length">
+        <el-card v-for="article in articles" :key="article.ID" class="article-card">
+          <h2>{{ article.Title }}</h2>
+          <p>{{ article.Preview }}</p>
+          <el-button text @click="viewDetail(article.ID)">阅读更多</el-button>
+        </el-card>
+      </div>
+      <div v-else class="no-data">您必须登录/注册才可以查看文章</div>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import axios from '../axios';
+import { useAuthStore } from '../store/auth';
+import type { Article } from "../types/Article";
+
+const articles = ref<Article[]>([]);
+const router = useRouter();
+const authStore = useAuthStore();
+
+const fetchArticles = async () => {
+  try {
+    const response = await axios.get<Article[]>('/articles');
+    articles.value = response.data;
+  } catch (error) {
+    console.error('Failed to load articles:', error);
+  }
+};
+
+const viewDetail = (id: string) => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.error('请先登录后再查看');
+    return;
+  }
+  router.push({ name: 'NewsDetail', params: { id } });
+};
+
+onMounted(fetchArticles);
+</script>
+
+<style scoped>
+.article-card {
+  margin: 20px 0;
+}
+
+.no-data {
+  text-align: center;
+  font-size: 1.2em;
+  color: #999;
+}
+</style>
+</file>
+
+<file path="FrontEnd/src/App.vue">
+<template>
+  <el-container>
+    <el-header>
+      <el-menu :default-active="activeIndex" class="el-menu-demo" mode="horizontal"  :ellipsis="true" @select="handleSelect">
+        <el-menu-item index="home">首页</el-menu-item>
+        <el-menu-item index="currencyExchange">兑换货币</el-menu-item>
+        <el-menu-item index="news">查看新闻</el-menu-item>
+        <el-menu-item index="login" v-if="!authStore.isAuthenticated">登录</el-menu-item>
+        <el-menu-item index="register" v-if="!authStore.isAuthenticated">注册</el-menu-item>
+        <el-menu-item index="logout" v-if="authStore.isAuthenticated">退出</el-menu-item>
+      </el-menu>
+    </el-header>
+    <el-main>
+      <router-view></router-view>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ref, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { useAuthStore } from './store/auth';
+
+const router = useRouter();
+const route = useRoute();
+const authStore = useAuthStore();
+const activeIndex = ref(route.name?.toString() || 'home');
+
+watch(route, (newRoute) => {
+  activeIndex.value = newRoute.name?.toString() || 'home';
+});
+
+const handleSelect = (key: string) => {
+  if ( key === 'logout') {
+    authStore.logout();
+    router.push({ name: 'Home' });
+  } else {
+    router.push({ name:  key.charAt(0).toUpperCase() +  key.slice(1) });
+  }
+};
+</script>
+
+<style scoped>
+.el-menu-demo {
+  line-height: 60px;
+}
+</style>
+</file>
+
+<file path="FrontEnd/src/axios.ts">
+import axios from 'axios';
+
+const instance = axios.create({
+  baseURL: 'http://localhost:3080/api',
+});
+
+instance.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = token;
+    console.log(token)
+  }
+  return config;
+});
+
+export default instance;
+</file>
+
+<file path="FrontEnd/src/main.ts">
+import { createApp } from 'vue';
+import { createPinia } from 'pinia';
+import ElementPlus from 'element-plus';
+import 'element-plus/dist/index.css';
+import App from './App.vue';
+import router from './router';
+
+const app = createApp(App);
+app.use(createPinia());
+app.use(ElementPlus);
+app.use(router);
+app.mount('#app');
+</file>
+
+<file path="FrontEnd/src/shims-vue.d.ts">
+// client/src/shims-vue.d.ts
+declare module '*.vue' {
+    import { DefineComponent } from 'vue';
+    const component: DefineComponent<{}, {}, any>;
+    export default component;
+  }
+</file>
+
+<file path="FrontEnd/src/vite-env.d.ts">
+/// <reference types="vite/client" />
+</file>
+
+<file path="FrontEnd/__VLS_types.d.ts">
+// @ts-nocheck
+
+type __VLS_IntrinsicElements = __VLS_PickNotAny<import('vue/jsx-runtime').JSX.IntrinsicElements, __VLS_PickNotAny<JSX.IntrinsicElements, Record<string, any>>>;
+type __VLS_Element = __VLS_PickNotAny<import('vue/jsx-runtime').JSX.Element, JSX.Element>;
+
+type __VLS_IsAny<T> = 0 extends 1 & T ? true : false;
+type __VLS_PickNotAny<A, B> = __VLS_IsAny<A> extends true ? B : A;
+
+type __VLS_Prettify<T> = { [K in keyof T]: T[K]; } & {};
+
+type __VLS_OmitKeepDiscriminatedUnion<T, K extends keyof any> =
+	T extends any
+		? Pick<T, Exclude<keyof T, K>>
+		: never;
+
+type __VLS_GlobalComponents =
+	__VLS_PickNotAny<import('vue').GlobalComponents, {}>
+	& __VLS_PickNotAny<import('@vue/runtime-core').GlobalComponents, {}>
+	& __VLS_PickNotAny<import('@vue/runtime-dom').GlobalComponents, {}>
+	& Pick<typeof import('vue'),
+		'Transition'
+		| 'TransitionGroup'
+		| 'KeepAlive'
+		| 'Suspense'
+		| 'Teleport'
+	>;
+
+declare const __VLS_intrinsicElements: __VLS_IntrinsicElements;
+
+// v-for
+declare function __VLS_getVForSourceType(source: number): [number, number, number][];
+declare function __VLS_getVForSourceType(source: string): [string, number, number][];
+declare function __VLS_getVForSourceType<T extends any[]>(source: T): [
+	T[number], // item
+	number, // key
+	number, // index
+][];
+declare function __VLS_getVForSourceType<T extends { [Symbol.iterator](): Iterator<any> }>(source: T): [
+	T extends { [Symbol.iterator](): Iterator<infer T1> } ? T1 : never, // item 
+	number, // key
+	undefined, // index
+][];
+declare function __VLS_getVForSourceType<T>(source: T): [
+	T[keyof T], // item
+	keyof T, // key
+	number, // index
+][];
+
+declare function __VLS_getSlotParams<T>(slot: T): Parameters<__VLS_PickNotAny<NonNullable<T>, (...args: any[]) => any>>;
+declare function __VLS_getSlotParam<T>(slot: T): Parameters<__VLS_PickNotAny<NonNullable<T>, (...args: any[]) => any>>[0];
+declare function __VLS_directiveFunction<T>(dir: T):
+	T extends import('vue').ObjectDirective<infer E, infer V> | import('vue').FunctionDirective<infer E, infer V> ? (value: V) => void
+	: T;
+declare function __VLS_withScope<T, K>(ctx: T, scope: K): ctx is T & K;
+declare function __VLS_makeOptional<T>(t: T): { [K in keyof T]?: T[K] };
+
+type __VLS_SelfComponent<N, C> = string extends N ? {} : N extends string ? { [P in N]: C } : {};
+type __VLS_WithComponent<N0 extends string, LocalComponents, N1 extends string, N2 extends string, N3 extends string> =
+	N1 extends keyof LocalComponents ? N1 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N1] } :
+	N2 extends keyof LocalComponents ? N2 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N2] } :
+	N3 extends keyof LocalComponents ? N3 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N3] } :
+	N1 extends keyof __VLS_GlobalComponents ? N1 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N1] } :
+	N2 extends keyof __VLS_GlobalComponents ? N2 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N2] } :
+	N3 extends keyof __VLS_GlobalComponents ? N3 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N3] } :
+	{ [K in N0]: unknown }
+
+type __VLS_FillingEventArg_ParametersLength<E extends (...args: any) => any> = __VLS_IsAny<Parameters<E>> extends true ? -1 : Parameters<E>['length'];
+type __VLS_FillingEventArg<E> = E extends (...args: any) => any ? __VLS_FillingEventArg_ParametersLength<E> extends 0 ? ($event?: undefined) => ReturnType<E> : E : E;
+declare function __VLS_asFunctionalComponent<T, K = T extends new (...args: any) => any ? InstanceType<T> : unknown>(t: T, instance?: K):
+	T extends new (...args: any) => any
+	? (props: (K extends { $props: infer Props } ? Props : any) & Record<string, unknown>, ctx?: {
+		attrs?: any,
+		slots?: K extends { $slots: infer Slots } ? Slots : any,
+		emit?: K extends { $emit: infer Emit } ? Emit : any
+	}) => __VLS_Element & { __ctx?: typeof ctx & { props?: typeof props; expose?(exposed: K): void; } }
+	: T extends () => any ? (props: {}, ctx?: any) => ReturnType<T>
+	: T extends (...args: any) => any ? T
+	: (_: {} & Record<string, unknown>, ctx?: any) => { __ctx?: { attrs?: any, expose?: any, slots?: any, emit?: any, props?: {} & Record<string, unknown> } };
+declare function __VLS_elementAsFunctionalComponent<T>(t: T): (_: T & Record<string, unknown>, ctx?: any) => { __ctx?: { attrs?: any, expose?: any, slots?: any, emit?: any, props?: T & Record<string, unknown> } };
+declare function __VLS_functionalComponentArgsRest<T extends (...args: any) => any>(t: T): Parameters<T>['length'] extends 2 ? [any] : [];
+declare function __VLS_pickEvent<E1, E2>(emitEvent: E1, propEvent: E2): __VLS_FillingEventArg<
+	__VLS_PickNotAny<
+		__VLS_AsFunctionOrAny<E2>,
+		__VLS_AsFunctionOrAny<E1>
+	>
+> | undefined;
+declare function __VLS_pickFunctionalComponentCtx<T, K>(comp: T, compInstance: K): __VLS_PickNotAny<
+	'__ctx' extends keyof __VLS_PickNotAny<K, {}> ? K extends { __ctx?: infer Ctx } ? Ctx : never : any
+	, T extends (props: any, ctx: infer Ctx) => any ? Ctx : any
+>;
+type __VLS_FunctionalComponentProps<T, K> =
+	'__ctx' extends keyof __VLS_PickNotAny<K, {}> ? K extends { __ctx?: { props?: infer P } } ? NonNullable<P> : never
+	: T extends (props: infer P, ...args: any) => any ? P :
+	{};
+type __VLS_AsFunctionOrAny<F> = unknown extends F ? any : ((...args: any) => any) extends F ? F : any;
+
+declare function __VLS_normalizeSlot<S>(s: S): S extends () => infer R ? (props: {}) => R : S;
+
+/**
+ * emit
+ */
+// fix https://github.com/vuejs/language-tools/issues/926
+type __VLS_UnionToIntersection<U> = (U extends unknown ? (arg: U) => unknown : never) extends ((arg: infer P) => unknown) ? P : never;
+type __VLS_OverloadUnionInner<T, U = unknown> = U & T extends (...args: infer A) => infer R
+	? U extends T
+	? never
+	: __VLS_OverloadUnionInner<T, Pick<T, keyof T> & U & ((...args: A) => R)> | ((...args: A) => R)
+	: never;
+type __VLS_OverloadUnion<T> = Exclude<
+	__VLS_OverloadUnionInner<(() => never) & T>,
+	T extends () => never ? never : () => never
+>;
+type __VLS_ConstructorOverloads<T> = __VLS_OverloadUnion<T> extends infer F
+	? F extends (event: infer E, ...args: infer A) => any
+	? { [K in E & string]: (...args: A) => void; }
+	: never
+	: never;
+type __VLS_NormalizeEmits<T> = __VLS_Prettify<
+	__VLS_UnionToIntersection<
+		__VLS_ConstructorOverloads<T> & {
+			[K in keyof T]: T[K] extends any[] ? { (...args: T[K]): void } : never
+		}
+	>
+>;
+</file>
+
+<file path="FrontEnd/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ExchangeApp</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+</file>
+
+<file path="FrontEnd/package.json">
+{
+  "name": "exchangeappdemo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.3",
+    "element-plus": "^2.7.4",
+    "pinia": "^2.1.7",
+    "router": "^1.3.8",
+    "vant": "^4.9.0",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/axios": "^0.14.0",
+    "@types/node": "^20.12.13",
+    "@types/vue-router": "^2.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "@typescript-eslint/parser": "^7.11.0",
+    "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/cli-plugin-typescript": "^5.0.8",
+    "@vue/eslint-config-typescript": "^13.0.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.4.0",
+    "vue-tsc": "^2.0.6"
+  },
+  "main": "index.js",
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
+</file>
+
+<file path="FrontEnd/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "strict": true,
+    "jsx": "preserve",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+}
+</file>
+
+<file path="FrontEnd/tsconfig.node.json">
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}
+</file>
+
+<file path="FrontEnd/vite.config.ts">
+// https://vitejs.dev/config/
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+
+export default defineConfig({
+  plugins: [vue()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+});
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: exchange-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123
+      MYSQL_DATABASE: exchangeApp
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: exchange-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./BackEnd
+      dockerfile: Dockerfile
+    container_name: exchange-backend
+    ports:
+      - "3080:3080"  # 这里已经正确映射了
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_USER=root
+      - DB_PASSWORD=123
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=exchangeApp
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+</file>
+
+</files>

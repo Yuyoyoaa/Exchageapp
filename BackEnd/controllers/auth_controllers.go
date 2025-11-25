@@ -178,6 +178,14 @@ func UpdateProfile(ctx *gin.Context) {
 	}
 
 	if input.Password != "" {
+		// 校验密码强度
+		if !utils.ValidatePassword(input.Password) {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error": "密码至少8位，必须包含大写字母、小写字母和数字",
+			})
+			return
+		}
+
 		hashedPwd, err := utils.HashPassword(input.Password)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
