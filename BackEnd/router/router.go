@@ -35,7 +35,8 @@ func SetupRouter() *gin.Engine {
 		api.GET("/exchangeRates", controllers.GetExchangeRates)
 
 		// 文章公共接口（无需登录）
-		api.GET("/articles", controllers.GetArticles)        // 分页 + 分类
+		api.GET("/articles", controllers.GetArticles) // 分页 + 分类
+		api.GET("/articles/hot", controllers.GetHotArticles)
 		api.GET("/articles/:id", controllers.GetArticleByID) // 文章详情（自动 views++）
 		api.GET("/articles/:id/comments", controllers.GetCommentsByArticleID)
 		api.GET("/categories", controllers.GetCategories)
