@@ -1,0 +1,1227 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+config/
+  config.go
+  config.yml
+  db.go
+  redis.go
+controllers/
+  admin_controllers.go
+  article_controllers.go
+  auth_controllers.go
+  exchange_rate_controllers.go
+  like_controllers.go
+global/
+  global.go
+middlewares/
+  auth_middlewares.go
+  role_middlewares.go
+models/
+  article.go
+  exchange_rate.go
+  user.go
+router/
+  router.go
+utils/
+  utils.go
+.prettierrc.json
+Dockerfile
+go.mod
+main.go
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="config/config.go">
+package config
+
+import (
+	"log"
+
+	"github.com/spf13/viper"
+)
+
+// 将配置文件赋值给自定义的结构体
+type Config struct {
+	App struct {
+		Name string `yaml:"name"`
+		Port string `yaml:"port"`
+	} `yaml:"app"`
+	Database struct {
+		Dsn          string `yaml:"dsn"`
+		MaxIdleCONNS int    `yaml:"MaxIdleCONNS"`
+		MaxOpenCONNS int    `yaml:"MaxOpenCONNS"`
+	}
+	Redis struct {
+		Addr     string `yaml:"addr"`
+		Password string `yaml:"password"`
+		DB       int    `yaml:"db"`
+	} `yaml:"redis"`
+}
+
+var AppConfig *Config
+
+func InitConfig() {
+	viper.SetConfigName("config")
+	viper.SetConfigType("yml")
+	viper.AddConfigPath("./config")
+
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("Error Reading Config file: %v", err)
+	}
+
+	AppConfig = &Config{}
+
+	if err := viper.Unmarshal(AppConfig); err != nil {
+		log.Fatalf("Unable to decode into struct: %v", err)
+	}
+
+	InitDB()
+	InitRedis()
+}
+</file>
+
+<file path="config/config.yml">
+app:
+  name: 'CurrencyExchangeApp'
+  port: '3080'
+
+database:
+  dsn: 'root:123@tcp(mysql:3306)/exchangeApp?charset=utf8mb4&parseTime=True&loc=Local'
+  MaxIdleCONNS: 10
+  MaxOpenCONNS: 100
+
+redis:
+  addr: 'redis:6379'
+  password: ''
+  db: 0
+</file>
+
+<file path="config/db.go">
+package config
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"fmt"
+	"log"
+	"time"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func InitDB() {
+	dsn := AppConfig.Database.Dsn
+	fmt.Println("DSN:", dsn)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to initialize database, got error: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("Failed to configure database, got error: %v", err)
+	}
+
+	sqlDB.SetMaxIdleConns(AppConfig.Database.MaxIdleCONNS)
+	sqlDB.SetMaxOpenConns(AppConfig.Database.MaxOpenCONNS)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	global.Db = db
+
+	// 迁移模型
+	if err := global.Db.AutoMigrate(
+		&models.User{},
+		&models.Article{},
+		&models.ExchangeRate{},
+	); err != nil {
+		log.Fatalf("Failed to migrate database, got error: %v", err)
+	}
+
+	fmt.Println("Database initialized and migrated successfully")
+}
+</file>
+
+<file path="config/redis.go">
+package config
+
+import (
+	"context"
+	"exchangeapp/global"
+	"log"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func InitRedis() {
+	ctx := context.Background()
+	RedisClient := redis.NewClient(&redis.Options{
+		Addr:     AppConfig.Redis.Addr,
+		Password: AppConfig.Redis.Password,
+		DB:       AppConfig.Redis.DB,
+	})
+
+	_, err := RedisClient.Ping(ctx).Result()
+
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis,got error: %v", err)
+	}
+
+	global.RedisDB = RedisClient
+}
+</file>
+
+<file path="controllers/admin_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// GetUserList 获取所有用户列表 (仅管理员)
+func GetUserList(ctx *gin.Context) {
+	var users []models.User
+	// 查询所有用户，排除密码字段
+	// Select 语法取决于 GORM 版本，这里使用简单查询后手动清空密码，或者使用 Smart Select
+	if err := global.Db.Find(&users).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 处于安全考虑，清空密码和敏感信息
+	var safeUsers []map[string]interface{}
+	for _, u := range users {
+		safeUsers = append(safeUsers, map[string]interface{}{
+			"ID":        u.ID,
+			"username":  u.Username,
+			"nickname":  u.Nickname,
+			"email":     u.Email,
+			"role":      u.Role,
+			"avatar":    u.Avatar,
+			"CreatedAt": u.CreatedAt,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, safeUsers)
+}
+
+// UpdateUserRole 修改用户角色 (仅管理员)
+func UpdateUserRole(ctx *gin.Context) {
+	// 1. 获取目标用户 ID
+	targetUserID := ctx.Param("id")
+
+	// 2. 获取请求体中的新角色
+	var input struct {
+		Role string `json:"role" binding:"required"` // 只允许 "admin" 或 "user"
+	}
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 简单校验角色合法性
+	if input.Role != "admin" && input.Role != "user" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role value"})
+		return
+	}
+
+	// 3. 查找并更新用户
+	var user models.User
+	if err := global.Db.First(&user, targetUserID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// 防止自我降级 (可选：防止管理员不小心把自己改成 user 后失去权限)
+	currentUsername := ctx.GetString("username")
+	if user.Username == currentUsername && input.Role == "user" {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "You cannot demote yourself"})
+		return
+	}
+
+	// 更新数据库
+	if err := global.Db.Model(&user).Update("role", input.Role).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":  "Role updated successfully",
+		"user_id":  user.ID,
+		"new_role": input.Role,
+	})
+}
+
+// DeleteUser 删除用户 (仅管理员)
+func DeleteUser(ctx *gin.Context) {
+	// 目标用户 ID（要删除谁）
+	targetID := ctx.Param("id")
+
+	// 当前正在操作的管理员 ID（从 Token 获取）
+	currentUserID := ctx.GetString("userID")
+
+	// 防止删除自己
+	if currentUserID == targetID {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "不能删除自己的账号",
+		})
+		return
+	}
+
+	// 检查用户是否存在
+	var user models.User
+	if err := global.Db.First(&user, targetID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 删除用户
+	if err := global.Db.Delete(&models.User{}, targetID).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
+}
+</file>
+
+<file path="controllers/article_controllers.go">
+package controllers
+
+import (
+	"encoding/json"
+	"errors"
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+)
+
+var cacheKey = "articles"
+
+func CreateArticle(ctx *gin.Context) {
+	var article models.Article
+
+	if err := ctx.ShouldBindJSON(&article); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := global.Db.Create(&article).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 在新增文章以后，删除旧缓存，让下次读取时强制从数据库刷新数据
+	if err := global.RedisDB.Del(ctx.Request.Context(), cacheKey).Err(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, article)
+}
+
+func GetArticles(ctx *gin.Context) {
+	cachedData, err := global.RedisDB.Get(ctx.Request.Context(), cacheKey).Result()
+
+	// 未命中缓存
+	if err == redis.Nil {
+		var articles []models.Article
+
+		// 查询数据库
+		if err := global.Db.Find(&articles).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			} else {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+
+		// 将文章序列号为json
+		articleJSON, err := json.Marshal(articles)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// 写入缓存
+		if err := global.RedisDB.Set(ctx.Request.Context(), cacheKey, articleJSON, 10*time.Minute).Err(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, articles) // 返回客户端
+		return
+	}
+
+	// 其他 Redis 错误
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 命中缓存
+	var articles []models.Article
+	if err := json.Unmarshal([]byte(cachedData), &articles); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, articles)
+}
+
+func GetArticleByID(ctx *gin.Context) {
+	// 获取路径的参数
+	id := ctx.Param("id")
+
+	var article models.Article
+
+	if err := global.Db.Where("id = ?", id).First(&article).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) { // 错误匹配
+			ctx.JSON(http.StatusNotFound, gin.H{
+				"error": err.Error(),
+			})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, article)
+}
+</file>
+
+<file path="controllers/auth_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"exchangeapp/utils"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func Register(ctx *gin.Context) {
+	var input struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Role     string `json:"role"` // 可选
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 验证角色合法性
+	if input.Role != "" && input.Role != "admin" && input.Role != "user" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role value"})
+		return
+	}
+
+	if !utils.ValidatePassword(input.Password) {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "密码至少8位，必须包含大写字母、小写字母和数字",
+		})
+		return
+	}
+
+	hashedPwd, err := utils.HashPassword(input.Password)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user := models.User{
+		Username: input.Username,
+		Password: hashedPwd,
+		Role:     input.Role,
+		Nickname: input.Nickname,
+		Email:    input.Email,
+		Avatar:   input.Avatar,
+	}
+
+	if user.Role == "" {
+		user.Role = "user"
+	}
+
+	// 检查用户名和邮箱是否已存在
+	var existingUser models.User
+	if err := global.Db.Where("username = ? OR email = ?", user.Username, user.Email).First(&existingUser).Error; err == nil {
+		if existingUser.Username == user.Username {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "用户名已存在"})
+		} else {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "邮箱已存在"})
+		}
+		return
+	}
+
+	if err := global.Db.Create(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	token, err := utils.GenerateJWT(user.Username)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, gin.H{"token": token, "user": user})
+}
+
+func Login(ctx *gin.Context) {
+	// 登录过程的用户名和密码
+	var input struct {
+		Username string `json:"username"` // 结构体标签(方便将json字段映射到结构体)
+		Password string `json:"password"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var user models.User
+
+	// 验证用户名
+	if err := global.Db.Where("username = ?", input.Username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "wrong credentials",
+		})
+		return
+	}
+
+	key := "login_fail:" + input.Username
+	failCount, _ := global.RedisDB.Get(ctx, key).Int()
+	if failCount >= 5 {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "尝试次数过多，请15分钟后再试"})
+		return
+	}
+
+	if !utils.CheckPassword(input.Password, user.Password) {
+		// 登录失败时
+		global.RedisDB.Incr(ctx, key)
+		global.RedisDB.Expire(ctx, key, time.Minute*15)
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "wrong credentials",
+		})
+		return
+	}
+
+	// 登录成功，删除失败计数
+	global.RedisDB.Del(ctx, key)
+
+	token, err := utils.GenerateJWT(user.Username)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// 新增获取/更新用户信息接口
+func GetProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	user.Password = "" // 不返回密码
+	ctx.JSON(http.StatusOK, user)
+}
+
+func UpdateProfile(ctx *gin.Context) {
+	username := ctx.GetString("username")
+
+	var input struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email" binding:"email"`
+		Avatar   string `json:"avatar"`
+		Password string `json:"password"`
+	}
+
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user models.User
+	if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	if input.Nickname != "" {
+		user.Nickname = input.Nickname
+	}
+
+	if input.Email != "" {
+		user.Email = input.Email
+	}
+
+	if input.Avatar != "" {
+		user.Avatar = input.Avatar
+	}
+
+	if input.Password != "" {
+		// 校验密码强度
+		if !utils.ValidatePassword(input.Password) {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error": "密码至少8位，必须包含大写字母、小写字母和数字",
+			})
+			return
+		}
+
+		hashedPwd, err := utils.HashPassword(input.Password)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		user.Password = hashedPwd
+	}
+
+	if err := global.Db.Save(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user.Password = ""
+	ctx.JSON(http.StatusOK, user)
+}
+</file>
+
+<file path="controllers/exchange_rate_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func CreateExchangeRate(ctx *gin.Context) {
+	var exchangeRate models.ExchangeRate
+
+	if err := ctx.ShouldBindJSON(&exchangeRate); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	exchangeRate.Date = time.Now()
+
+	if err := global.Db.Create(&exchangeRate).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"message": "汇率创建成功",
+		"data":    exchangeRate,
+	})
+}
+
+func GetExchangeRates(ctx *gin.Context) {
+	var exchangeRates []models.ExchangeRate
+
+	if err := global.Db.Find(&exchangeRates).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	ctx.JSON(http.StatusOK, exchangeRates)
+}
+</file>
+
+<file path="controllers/like_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+func LikeArticle(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	likeKey := "article:" + articleID + ":likes"
+
+	// 获取点赞后的数量
+	likes, err := global.RedisDB.Incr(ctx.Request.Context(), likeKey).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Successfully Liked",
+		"likes":   likes, // 返回点赞数量保持一致性
+	})
+}
+
+func GetArticleLikes(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	likeKey := "article:" + articleID + ":likes"
+
+	likes, err := global.RedisDB.Get(ctx.Request.Context(), likeKey).Result()
+
+	if err == redis.Nil { // key不存在
+		likes = "0"
+	} else if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"likes": likes,
+	})
+}
+</file>
+
+<file path="global/global.go">
+package global
+
+import (
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+)
+
+// 全局变量
+var (
+	Db      *gorm.DB
+	RedisDB *redis.Client
+)
+</file>
+
+<file path="middlewares/auth_middlewares.go">
+package middlewares
+
+import (
+	"exchangeapp/utils"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 验证JWT是否有效
+
+func AuthMiddleWare() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		token := ctx.GetHeader("Authorization")
+		if token == "" {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authorization header is required",
+			})
+			ctx.Abort() // 阻止后续的中间件和处理函数执行,但不会中断当前函数中 ctx.Abort()之后的代码执行
+			return
+		}
+		username, err := utils.ParseJWT(token)
+
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token: " + err.Error(),
+			})
+			ctx.Abort()
+			return
+		}
+
+		ctx.Set("username", username) // 用于在不同中间件传递kv数据
+		ctx.Next()
+
+	}
+}
+</file>
+
+<file path="middlewares/role_middlewares.go">
+package middlewares
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 检查角色
+func AdminMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		username, exists := ctx.Get("username")
+		if !exists {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			ctx.Abort()
+			return
+		}
+		var user models.User
+		if err := global.Db.Where("username = ?", username.(string)).First(&user).Error; err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+			ctx.Abort()
+			return
+		}
+		if user.Role != "admin" {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+			ctx.Abort()
+			return
+		}
+		ctx.Next()
+	}
+}
+</file>
+
+<file path="models/article.go">
+package models
+
+import "gorm.io/gorm"
+
+// 在mysql表格中都会变为小写
+type Article struct {
+	gorm.Model
+	Title   string `binding:"required"`
+	Content string `binding:"required"`
+	Preview string `binding:"required"` // 文字的预览
+	Likes   int    `gorm:"default:0"`
+}
+</file>
+
+<file path="models/exchange_rate.go">
+package models
+
+import "time"
+
+type ExchangeRate struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	FromCurrency string    `json:"fromCurrency" binding:"required"`
+	ToCurrency   string    `json:"toCurrency" binding:"required"`
+	Rate         float64   `json:"rate" binding:"required"`
+	Date         time.Time `json:"date"`
+}
+</file>
+
+<file path="models/user.go">
+package models
+
+import "gorm.io/gorm"
+
+type User struct {
+	gorm.Model
+	Username string `gorm:"unique" json:"username" binding:"required"`
+	Password string `json:"-" binding:"required"`
+	Role     string `gorm:"default:'user'" json:"role"` // user/admin
+	Nickname string `json:"nickname"`                   // 昵称
+	Email    string `gorm:"unique" json:"email"`        // 可为空，不强制验证
+	Avatar   string `json:"avatar"`                     // 头像
+}
+
+/*Role 默认是普通用户 user，管理员为 admin
+
+Password 不在 JSON 输出中显示（json:"-"）
+
+Nickname, Email, Avatar 可以为空 */
+</file>
+
+<file path="router/router.go">
+package router
+
+import (
+	"exchangeapp/controllers"
+	"exchangeapp/middlewares"
+	"time"
+
+	"github.com/gin-contrib/cors"
+
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRouter() *gin.Engine {
+	r := gin.Default()
+
+	// 允许跨域请求
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}, // 添加 PATCH
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
+	// 用户注册与登录
+	auth := r.Group("/api/auth")
+	{
+		auth.POST("/login", controllers.Login)
+		auth.POST("/register", controllers.Register)
+	}
+
+	api := r.Group("/api")
+	{
+		// 不需要认证的公共接口
+		api.GET("/exchangeRates", controllers.GetExchangeRates)
+
+		// 需要认证的接口组
+		authenticated := api.Group("")
+		authenticated.Use(middlewares.AuthMiddleWare())
+		{
+			authenticated.POST("/exchangeRates", controllers.CreateExchangeRate)
+			authenticated.POST("/articles", controllers.CreateArticle)
+			authenticated.GET("/articles", controllers.GetArticles)
+			authenticated.GET("/articles/:id", controllers.GetArticleByID)
+			authenticated.POST("/articles/:id/like", controllers.LikeArticle)
+			authenticated.GET("/articles/:id/like", controllers.GetArticleLikes)
+
+			// 用户信息接口
+			user := authenticated.Group("/user")
+			{
+				user.GET("/profile", controllers.GetProfile)
+				user.PUT("/profile", controllers.UpdateProfile)
+			}
+
+			// 管理员专用接口组
+			adminGroup := authenticated.Group("/admin")
+			adminGroup.Use(middlewares.AdminMiddleware())
+			{
+				adminGroup.GET("/users", controllers.GetUserList)
+				adminGroup.PATCH("/users/:id/role", controllers.UpdateUserRole)
+				adminGroup.DELETE("/users/:id", controllers.DeleteUser)
+			}
+		}
+	}
+
+	return r
+}
+</file>
+
+<file path="utils/utils.go">
+package utils
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt"
+	"golang.org/x/crypto/bcrypt"
+)
+
+func HashPassword(pwd string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func GenerateJWT(username string) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": username,
+		"exp":      time.Now().Add(time.Hour * 72).Unix(),
+	})
+
+	signedToken, err := token.SignedString([]byte("secret"))
+	return "Bearer " + signedToken, err
+}
+
+func CheckPassword(password string, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+func ParseJWT(tokenString string) (string, error) {
+	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
+		tokenString = tokenString[7:]
+	}
+
+	// 解析JWT
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected Signing Method")
+		}
+		return []byte("secret"), nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		username, ok := claims["username"].(string)
+		if !ok {
+			return "", errors.New("username claim is not a string")
+		}
+		return username, nil
+	}
+	return "", err
+}
+
+// ValidatePassword 校验密码复杂度
+func ValidatePassword(pwd string) bool {
+	pwd = strings.TrimSpace(pwd) // 去掉首尾空格
+	if len(pwd) < 8 {
+		return false
+	}
+	var (
+		hasUpper = regexp.MustCompile(`[A-Z]`).MatchString
+		hasLower = regexp.MustCompile(`[a-z]`).MatchString
+		hasDigit = regexp.MustCompile(`\d`).MatchString
+	)
+	return hasUpper(pwd) && hasLower(pwd) && hasDigit(pwd)
+}
+</file>
+
+<file path=".prettierrc.json">
+{
+  "printWidth": 200,
+  "tabWidth": 2,
+  "singleQuote": true,
+  "semi": true,
+  "trailingComma": "none",
+  "vueIndentScriptAndStyle": true 
+}
+</file>
+
+<file path="Dockerfile">
+# 使用官方 Go 镜像
+FROM golang:1.24-alpine
+
+# 安装必要工具（可选）
+RUN apk add --no-cache git bash
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制 Go Modules 文件并下载依赖
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制整个后端代码
+COPY . .
+
+# 编译 Go 程序
+RUN go build -o server ./main.go
+
+# 容器暴露端口
+EXPOSE 3080
+
+# 启动程序
+CMD ["./server"]
+</file>
+
+<file path="go.mod">
+module exchangeapp
+
+go 1.24.0
+
+toolchain go1.24.9
+
+require (
+	github.com/gin-gonic/gin v1.11.0
+	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/redis/go-redis/v9 v9.16.0
+	github.com/spf13/viper v1.21.0
+	golang.org/x/crypto v0.43.0
+	gorm.io/driver/mysql v1.6.0
+	gorm.io/gorm v1.31.1
+)
+
+require (
+	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/bytedance/gopkg v0.1.3 // indirect
+	github.com/bytedance/sonic v1.14.2 // indirect
+	github.com/bytedance/sonic/loader v0.4.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.11 // indirect
+	github.com/gin-contrib/cors v1.7.6
+	github.com/gin-contrib/sse v1.1.0 // indirect
+	github.com/go-playground/locales v0.14.1 // indirect
+	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.28.0 // indirect
+	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/goccy/go-yaml v1.18.0 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/quic-go/qpack v0.5.1 // indirect
+	github.com/quic-go/quic-go v0.55.0 // indirect
+	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ugorji/go/codec v1.3.1 // indirect
+	go.uber.org/mock v0.6.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/arch v0.22.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.46.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
+	google.golang.org/protobuf v1.36.10 // indirect
+)
+</file>
+
+<file path="main.go">
+package main
+
+import (
+	"context"
+	"exchangeapp/config"
+	"exchangeapp/router"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"strings"
+)
+
+func main() {
+	config.InitConfig()
+
+	r := router.SetupRouter()
+
+	// 确保端口号以冒号开头
+	port := config.AppConfig.App.Port
+
+	if port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	srv := &http.Server{ // http服务器实例
+		Addr:    port,
+		Handler: r,
+	}
+
+	// 启动服务器并且进行监听
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Listen: %s\n", err)
+		}
+	}()
+	log.Printf("Server started on port %v", port)
+
+	// 创建通道监听系统信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM) // 中断信号发送给quit
+	<-quit                                             // 阻塞主 goroutine，直到收到信号，程序才会继续执行后面的退出逻辑
+
+	log.Println("Shutting down server...") // 程序接收到中断信号后的处理
+
+	// 创建 5 秒超时上下文，正常情况下等待正在处理的请求完成，如果超过 5 秒仍未完成，则强制关闭
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel() // 函数退出时释放上下文资源
+
+	// 会停止接收新的请求
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %s", err)
+	}
+
+	log.Println("Server exiting")
+}
+</file>
+
+</files>

@@ -34,10 +34,17 @@ func InitDB() {
 	if err := global.Db.AutoMigrate(
 		&models.User{},
 		&models.Article{},
+		&models.Category{},
+		&models.ArticleLike{},
+		&models.Favorite{},
+		&models.Comment{},
 		&models.ExchangeRate{},
 	); err != nil {
 		log.Fatalf("Failed to migrate database, got error: %v", err)
 	}
+
+	// 为 likes 添加唯一索引（兼容不同 gorm 版本的写法，若报错可删）：
+	_ = global.Db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_article ON article_likes (user_id, article_id);")
 
 	fmt.Println("Database initialized and migrated successfully")
 }
