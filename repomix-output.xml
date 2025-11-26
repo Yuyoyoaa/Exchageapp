@@ -47,6 +47,7 @@ BackEnd/
     db.go
     redis.go
   controllers/
+    admin_controllers.go
     article_controllers.go
     auth_controllers.go
     exchange_rate_controllers.go
@@ -79,11 +80,14 @@ FrontEnd/
       auth.ts
     types/
       Article.d.ts
+      User.d.ts
     views/
+      AdminUserView.vue
       CurrencyExchangeView.vue
       HomeView.vue
       NewsDetailView.vue
       NewsView.vue
+      ProfileView.vue
     App.vue
     axios.ts
     main.ts
@@ -96,6 +100,7 @@ FrontEnd/
   tsconfig.node.json
   vite.config.ts
 docker-compose.yml
+package.json
 </directory_structure>
 
 <files>
@@ -234,6 +239,124 @@ func InitRedis() {
 	}
 
 	global.RedisDB = RedisClient
+}
+</file>
+
+<file path="BackEnd/controllers/admin_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// GetUserList 获取所有用户列表 (仅管理员)
+func GetUserList(ctx *gin.Context) {
+	var users []models.User
+	// 查询所有用户，排除密码字段
+	// Select 语法取决于 GORM 版本，这里使用简单查询后手动清空密码，或者使用 Smart Select
+	if err := global.Db.Find(&users).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 处于安全考虑，清空密码和敏感信息
+	var safeUsers []map[string]interface{}
+	for _, u := range users {
+		safeUsers = append(safeUsers, map[string]interface{}{
+			"ID":        u.ID,
+			"username":  u.Username,
+			"nickname":  u.Nickname,
+			"email":     u.Email,
+			"role":      u.Role,
+			"avatar":    u.Avatar,
+			"CreatedAt": u.CreatedAt,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, safeUsers)
+}
+
+// UpdateUserRole 修改用户角色 (仅管理员)
+func UpdateUserRole(ctx *gin.Context) {
+	// 1. 获取目标用户 ID
+	targetUserID := ctx.Param("id")
+
+	// 2. 获取请求体中的新角色
+	var input struct {
+		Role string `json:"role" binding:"required"` // 只允许 "admin" 或 "user"
+	}
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 简单校验角色合法性
+	if input.Role != "admin" && input.Role != "user" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role value"})
+		return
+	}
+
+	// 3. 查找并更新用户
+	var user models.User
+	if err := global.Db.First(&user, targetUserID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// 防止自我降级 (可选：防止管理员不小心把自己改成 user 后失去权限)
+	currentUsername := ctx.GetString("username")
+	if user.Username == currentUsername && input.Role == "user" {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "You cannot demote yourself"})
+		return
+	}
+
+	// 更新数据库
+	if err := global.Db.Model(&user).Update("role", input.Role).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":  "Role updated successfully",
+		"user_id":  user.ID,
+		"new_role": input.Role,
+	})
+}
+
+// DeleteUser 删除用户 (仅管理员)
+func DeleteUser(ctx *gin.Context) {
+	// 目标用户 ID（要删除谁）
+	targetID := ctx.Param("id")
+
+	// 当前正在操作的管理员 ID（从 Token 获取）
+	currentUserID := ctx.GetString("userID")
+
+	// 防止删除自己
+	if currentUserID == targetID {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "不能删除自己的账号",
+		})
+		return
+	}
+
+	// 检查用户是否存在
+	var user models.User
+	if err := global.Db.First(&user, targetID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 删除用户
+	if err := global.Db.Delete(&models.User{}, targetID).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 }
 </file>
 
@@ -873,6 +996,16 @@ func SetupRouter() *gin.Engine {
 		user.PUT("/profile", controllers.UpdateProfile)
 	}
 
+	// 管理员专用接口组
+	adminGroup := r.Group("/api/admin")
+	// 关键：同时使用 认证中间件 和 管理员权限中间件
+	adminGroup.Use(middlewares.AuthMiddleWare(), middlewares.AdminMiddleware())
+	{
+		adminGroup.GET("/users", controllers.GetUserList)               // 获取列表
+		adminGroup.PATCH("/users/:id/role", controllers.UpdateUserRole) // 修改角色
+		adminGroup.DELETE("/users/:id", controllers.DeleteUser)         // 删除用户
+	}
+
 	return r
 }
 </file>
@@ -1128,50 +1261,57 @@ func main() {
 <file path="FrontEnd/src/components/Login.vue">
 <template>  
   <div class="auth-container">  
-    <el-form :model="form" class="auth-form" @submit.prevent="login">  
-      <el-form-item label="用户名" label-width="80px">  
+    <el-form :model="form" class="auth-form" label-position="top" @submit.prevent="login">  
+      <h2 style="text-align: center; margin-bottom: 20px;">用户登录</h2>
+      <el-form-item label="用户名">  
         <el-input v-model="form.username" placeholder="请输入用户名" />  
       </el-form-item>  
-      <el-form-item label="密码" label-width="80px">  
-        <el-input v-model="form.password" type="password" placeholder="请输入密码" />  
+      <el-form-item label="密码">  
+        <el-input v-model="form.password" type="password" placeholder="请输入密码" show-password />  
       </el-form-item>  
       <el-form-item>  
-        <el-button type="primary" native-type="submit">登录</el-button>  
+        <el-button type="primary" native-type="submit" style="width: 100%" :loading="loading">登录</el-button>  
       </el-form-item>  
     </el-form>  
   </div>  
 </template>  
   
-  <script setup lang="ts">
-  import { ref } from 'vue';
-  import { useRouter } from 'vue-router';
-  import { useAuthStore } from '../store/auth';
-  import { ElMessage } from 'element-plus';
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '../store/auth';
+
+const form = ref({
+  username: '',
+  password: '',
+});
+
+const loading = ref(false);
+const authStore = useAuthStore();
+const router = useRouter();
+
+const login = async () => {
+  loading.value = true;
+  try {
+    await authStore.login(form.value.username, form.value.password);
+    ElMessage.success('登录成功');
+    router.push({ name: 'News' });
+  } catch (error: any) {
+    // 这里的 error.message 已经是 store 中处理过的后端 error 字段
+    ElMessage.error(error.message || '登录失败，请检查网络或重试。');
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
   
-  const form = ref({
-    username: '',
-    password: '',
-  });
-  
-  const authStore = useAuthStore();
-  const router = useRouter();
-  
-  const login = async () => {
-    try {
-      await authStore.login(form.value.username, form.value.password);
-      router.push({ name: 'News' });
-    } catch {
-      ElMessage.error('登录失败，请检查用户名和密码。');
-    }
-  };
-  </script>
-  
-  <style scoped>
+<style scoped>
 .auth-container {  
   display: flex;  
   justify-content: center;  
   align-items: center;  
-  height: 100vh; 
+  height: 80vh; 
   background-color: #f5f5f5; 
   padding: 20px;  
   box-sizing: border-box; 
@@ -1180,59 +1320,94 @@ func main() {
 .auth-form {  
   width: 100%;  
   max-width: 360px; 
-  padding: 20px;  
+  padding: 30px;  
   background-color: #fff;  
-  border-radius: 4px;  
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);  
+  border-radius: 8px;  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
 }  
-  </style>
+</style>
 </file>
 
 <file path="FrontEnd/src/components/Register.vue">
 <template>
   <div class="auth-container">
-    <el-form :model="form" class="auth-form" @submit.prevent="register">
-      <el-form-item label="用户名" label-width="80px">
-        <el-input v-model="form.username" placeholder="请输入用户名" />
+    <el-form :model="form" class="auth-form" label-position="top" @submit.prevent="register">
+      <h2 style="text-align: center; margin-bottom: 20px;">用户注册</h2>
+      
+      <el-form-item label="用户名 (必填)" required>
+        <el-input v-model="form.username" placeholder="唯一用户名" />
       </el-form-item>
-      <el-form-item label="密码" label-width="80px">
-        <el-input v-model="form.password" type="password" placeholder="请输入密码" />
+      
+      <el-form-item label="密码 (必填)" required>
+        <el-input v-model="form.password" type="password" placeholder="8位以上，含大小写字母和数字" show-password />
       </el-form-item>
-      <el-button type="primary" native-type="submit">注册</el-button>
+
+      <el-form-item label="昵称">
+        <el-input v-model="form.nickname" placeholder="您的昵称" />
+      </el-form-item>
+
+      <el-form-item label="邮箱">
+        <el-input v-model="form.email" placeholder="example@email.com" />
+      </el-form-item>
+
+      <el-form-item label="头像 URL">
+        <el-input v-model="form.avatar" placeholder="https://example.com/avatar.png" />
+      </el-form-item>
+
+      <el-button type="primary" native-type="submit" style="width: 100%" :loading="loading">注册</el-button>
     </el-form>
   </div>
-  </template>
-  
-  <script setup lang="ts">
-  import { ref } from 'vue';
-  import { useRouter } from 'vue-router';
-  import { useAuthStore } from '../store/auth';
-  import { ElMessage } from 'element-plus';
-  
-  const form = ref({
-    username: '',
-    password: '',
-  });
-  
-  const authStore = useAuthStore();
-  const router = useRouter();
-  
-  const register = async () => {
-    try {
-      await authStore.register(form.value.username, form.value.password);
-      router.push({ name: 'News' });
-    } catch {
-      ElMessage.error('注册失败，请重试。');
-    }
-  };
-  </script>
-  
-  <style scoped>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '../store/auth';
+
+const form = ref({
+  username: '',
+  password: '',
+  nickname: '',
+  email: '',
+  avatar: ''
+});
+
+const loading = ref(false);
+const authStore = useAuthStore();
+const router = useRouter();
+
+const register = async () => {
+  if (!form.value.username || !form.value.password) {
+    ElMessage.warning('用户名和密码是必填项');
+    return;
+  }
+
+  loading.value = true;
+  try {
+    await authStore.register({
+      username: form.value.username,
+      password: form.value.password,
+      nickname: form.value.nickname || undefined,
+      email: form.value.email || undefined,
+      avatar: form.value.avatar || undefined
+    });
+    ElMessage.success('注册成功！');
+    router.push({ name: 'News' });
+  } catch (error: any) {
+    ElMessage.error(error.message || '注册失败，请重试。');
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
+
+<style scoped>
 .auth-container {  
   display: flex;  
   justify-content: center;  
   align-items: center;  
-  height: 100vh; 
+  min-height: 80vh; 
   background-color: #f5f5f5; 
   padding: 20px;  
   box-sizing: border-box; 
@@ -1240,23 +1415,26 @@ func main() {
   
 .auth-form {  
   width: 100%;  
-  max-width: 360px; 
-  padding: 20px;  
+  max-width: 400px; 
+  padding: 30px;  
   background-color: #fff;  
-  border-radius: 4px;  
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);  
+  border-radius: 8px;  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
 }  
-  </style>
+</style>
 </file>
 
 <file path="FrontEnd/src/router/index.ts">
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-import HomeView from '../views/HomeView.vue';
-import CurrencyExchangeView from '../views/CurrencyExchangeView.vue';
-import NewsView from '../views/NewsView.vue';
-import NewsDetailView from '../views/NewsDetailView.vue';
 import Login from '../components/Login.vue';
 import Register from '../components/Register.vue';
+import { useAuthStore } from '../store/auth';
+import AdminUserView from '../views/AdminUserView.vue';
+import CurrencyExchangeView from '../views/CurrencyExchangeView.vue';
+import HomeView from '../views/HomeView.vue';
+import NewsDetailView from '../views/NewsDetailView.vue';
+import NewsView from '../views/NewsView.vue';
+import ProfileView from '../views/ProfileView.vue';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'Home', component: HomeView },
@@ -1265,6 +1443,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/news/:id', name: 'NewsDetail', component: NewsDetailView },
   { path: '/login', name: 'Login', component: Login },
   { path: '/register', name: 'Register', component: Register },
+  { path: '/profile', name: 'Profile', component: ProfileView, meta: { requiresAuth: true } },
+  { 
+    path: '/admin/users', 
+    name: 'AdminUsers', 
+    component: AdminUserView, 
+    meta: { requiresAuth: true, requiresAdmin: true } 
+  },
 ];
 
 const router = createRouter({
@@ -1272,51 +1457,179 @@ const router = createRouter({
   routes,
 });
 
+// 路由守卫 - 认证检查和管理员权限检查
+router.beforeEach((to, from, next) => {
+  const authStore = useAuthStore();
+  
+  // 检查是否需要登录
+  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+    next('/login');
+    return;
+  }
+  
+  // 检查是否需要管理员权限
+  if (to.meta.requiresAdmin) {
+    // 确保用户信息已加载
+    if (!authStore.user) {
+      // 如果用户信息未加载，尝试获取
+      authStore.fetchProfile().then(() => {
+        checkAdminPermission(to, next);
+      }).catch(() => {
+        next('/login');
+      });
+    } else {
+      checkAdminPermission(to, next);
+    }
+    return;
+  }
+  
+  next();
+});
+
+function checkAdminPermission(to: any, next: any) {
+  const authStore = useAuthStore();
+  if (authStore.user?.role !== 'admin') {
+    next('/');
+    return;
+  }
+  next();
+}
+
 export default router;
 </file>
 
 <file path="FrontEnd/src/store/auth.ts">
+// FrontEnd/src/store/auth.ts
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { computed, ref } from 'vue';
 import axios from '../axios';
+
+// 定义用户信息接口
+export interface User {
+  ID: number;
+  username: string;
+  role: string;
+  nickname: string;
+  email: string;
+  avatar: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+}
+
+// 注册所需参数接口
+export interface RegisterPayload {
+  username: string;
+  password: string;
+  nickname?: string;
+  email?: string;
+  avatar?: string;
+}
+
+// 更新信息参数接口
+export interface UpdateProfilePayload {
+  nickname?: string;
+  email?: string;
+  avatar?: string;
+  password?: string;
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('token'));
+  const user = ref<User | null>(null);
 
   const isAuthenticated = computed(() => !!token.value);
 
+  // 获取当前用户信息
+  const fetchProfile = async () => {
+    if (!token.value) return;
+    try {
+      const response = await axios.get<User>('/user/profile');
+      user.value = response.data;
+    } catch (error) {
+      console.error('Failed to fetch profile', error);
+      // 如果获取用户信息失败（如token过期），可能需要登出
+      // logout(); 
+    }
+  };
+
+  // 登录
   const login = async (username: string, password: string) => {
     try {
       const response = await axios.post('/auth/login', { username, password });
       token.value = response.data.token;
       localStorage.setItem('token', token.value || '');
-    } catch (error) {
-      throw new Error(`Login failed! ${error}`);
+      
+      // 登录成功后立即获取用户信息
+      await fetchProfile();
+    } catch (error: any) {
+      // 透传后端具体的错误信息
+      if (error.response && error.response.data && error.response.data.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
     }
   };
 
-  const register = async (username: string, password: string) => {
+  // 注册
+  const register = async (payload: RegisterPayload) => {
     try {
-      const response = await axios.post('/auth/register', { username, password });
+      // 这里的 payload 包含了 username, password, nickname, email, avatar
+      const response = await axios.post('/auth/register', payload);
+      
       token.value = response.data.token;
+      // 注册接口直接返回了 user 对象，直接保存，省去一次请求
+      if (response.data.user) {
+        user.value = response.data.user;
+      }
       localStorage.setItem('token', token.value || '');
-    } catch (error) {
-      throw new Error(`Register failed! ${error}`);
+    } catch (error: any) {
+      if (error.response && error.response.data && error.response.data.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
     }
   };
+
+  // 更新用户信息
+  const updateProfile = async (payload: UpdateProfilePayload) => {
+    try {
+      const response = await axios.put<User>('/user/profile', payload);
+      // 更新本地状态
+      user.value = response.data;
+      return response.data;
+    } catch (error: any) {
+      if (error.response && error.response.data && error.response.data.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
+    }
+  }
 
   const logout = () => {
     token.value = null;
+    user.value = null;
     localStorage.removeItem('token');
   };
 
-  return {
-    token,
-    isAuthenticated,
-    login,
-    register,
-    logout
-  };
+ const checkAdminPermission = async (): Promise<boolean> => {
+  if (!user.value) {
+    await fetchProfile();
+  }
+  return user.value?.role === 'admin';
+};
+
+// 在 return 语句中添加这个方法
+return {
+  token,
+  user,
+  isAuthenticated,
+  login,
+  register,
+  fetchProfile,
+  updateProfile,
+  logout,
+  checkAdminPermission // 新增方法
+};
 });
 </file>
 
@@ -1331,6 +1644,297 @@ export interface Article {
 export interface Like{
     likes: number
 }
+</file>
+
+<file path="FrontEnd/src/types/User.d.ts">
+export interface User {
+  ID: number;
+  username: string;
+  nickname: string;
+  email: string;
+  role: string;
+  avatar: string;
+  CreatedAt: string;
+  UpdatedAt?: string;
+}
+
+export interface AdminUserListResponse {
+  users: User[];
+  total: number;
+}
+
+export interface ChangeRoleRequest {
+  role: 'admin' | 'user';
+}
+
+export interface ChangeRoleResponse {
+  message: string;
+  user_id: number;
+  new_role: string;
+}
+</file>
+
+<file path="FrontEnd/src/views/AdminUserView.vue">
+<template>
+  <el-container class="admin-container">
+    <el-card class="admin-card">
+      <template #header>
+        <div class="card-header">
+          <h2>用户管理</h2>
+          <el-button type="primary" @click="refreshUsers">刷新</el-button>
+        </div>
+      </template>
+
+      <el-table :data="users" v-loading="loading" style="width: 100%">
+        <el-table-column prop="ID" label="ID" width="80" />
+        <el-table-column prop="username" label="用户名" width="120" />
+        <el-table-column prop="nickname" label="昵称" width="120" />
+        <el-table-column prop="email" label="邮箱" width="200" />
+        <el-table-column prop="role" label="角色" width="100">
+          <template #default="scope">
+            <el-tag :type="scope.row.role === 'admin' ? 'danger' : 'primary'">
+              {{ scope.row.role === 'admin' ? '管理员' : '普通用户' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="CreatedAt" label="注册时间" width="180">
+          <template #default="scope">
+            {{ formatDate(scope.row.CreatedAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="scope">
+            <el-button 
+              size="small" 
+              :type="scope.row.role === 'admin' ? 'warning' : 'success'"
+              @click="handleChangeRole(scope.row)"
+              :disabled="scope.row.username === authStore.user?.username"
+            >
+              {{ scope.row.role === 'admin' ? '降为用户' : '设为管理员' }}
+            </el-button>
+            <el-button 
+              size="small" 
+              type="danger" 
+              @click="handleDeleteUser(scope.row)"
+              :disabled="scope.row.username === authStore.user?.username"
+            >
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
+    </el-card>
+
+    <!-- 修改角色确认对话框 -->
+    <el-dialog
+      v-model="roleDialogVisible"
+      title="修改用户角色"
+      width="400px"
+    >
+      <p>确定要将用户 <strong>{{ selectedUser?.username }}</strong> 的角色修改为 <strong>{{ selectedUser?.role === 'admin' ? '普通用户' : '管理员' }}</strong> 吗？</p>
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmChangeRole" :loading="roleLoading">
+          确认修改
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 删除用户确认对话框 -->
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="删除用户"
+      width="400px"
+    >
+      <p style="color: #f56c6c;">警告：此操作将永久删除用户 <strong>{{ selectedUser?.username }}</strong>，且无法恢复！</p>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="confirmDeleteUser" :loading="deleteLoading">
+          确认删除
+        </el-button>
+      </template>
+    </el-dialog>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { computed, onMounted, ref } from 'vue';
+import axios from '../axios';
+import { useAuthStore } from '../store/auth';
+
+interface User {
+  ID: number;
+  username: string;
+  nickname: string;
+  email: string;
+  role: string;
+  avatar: string;
+  CreatedAt: string;
+}
+
+const authStore = useAuthStore();
+const loading = ref(false);
+const users = ref<User[]>([]);
+const total = ref(0);
+const currentPage = ref(1);
+const pageSize = ref(10);
+
+// 对话框相关
+const roleDialogVisible = ref(false);
+const deleteDialogVisible = ref(false);
+const selectedUser = ref<User | null>(null);
+const roleLoading = ref(false);
+const deleteLoading = ref(false);
+
+// 获取用户列表
+const fetchUsers = async () => {
+  loading.value = true;
+  try {
+    const response = await axios.get('/admin/users');
+    users.value = response.data;
+    total.value = response.data.length;
+  } catch (error: any) {
+    ElMessage.error('获取用户列表失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 刷新用户列表
+const refreshUsers = () => {
+  currentPage.value = 1;
+  fetchUsers();
+};
+
+// 修改角色
+const handleChangeRole = (user: User) => {
+  selectedUser.value = user;
+  roleDialogVisible.value = true;
+};
+
+const confirmChangeRole = async () => {
+  if (!selectedUser.value) return;
+  
+  roleLoading.value = true;
+  try {
+    const newRole = selectedUser.value.role === 'admin' ? 'user' : 'admin';
+    await axios.patch(`/admin/users/${selectedUser.value.ID}/role`, {
+      role: newRole
+    });
+    
+    ElMessage.success('角色修改成功');
+    roleDialogVisible.value = false;
+    await fetchUsers(); // 刷新列表
+  } catch (error: any) {
+    ElMessage.error('修改角色失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    roleLoading.value = false;
+  }
+};
+
+// 删除用户
+const handleDeleteUser = (user: User) => {
+  selectedUser.value = user;
+  deleteDialogVisible.value = true;
+};
+
+const confirmDeleteUser = async () => {
+  if (!selectedUser.value) return;
+  
+  deleteLoading.value = true;
+  try {
+    await axios.delete(`/admin/users/${selectedUser.value.ID}`);
+    
+    ElMessage.success('用户删除成功');
+    deleteDialogVisible.value = false;
+    await fetchUsers(); // 刷新列表
+  } catch (error: any) {
+    ElMessage.error('删除用户失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    deleteLoading.value = false;
+  }
+};
+
+// 分页处理
+const handleSizeChange = (newSize: number) => {
+  pageSize.value = newSize;
+  currentPage.value = 1;
+  // 这里可以添加分页请求逻辑
+};
+
+const handleCurrentChange = (newPage: number) => {
+  currentPage.value = newPage;
+  // 这里可以添加分页请求逻辑
+};
+
+// 日期格式化
+const formatDate = (dateString: string) => {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleString('zh-CN');
+};
+
+// 计算分页后的数据（前端分页，如果数据量大建议后端分页）
+const paginatedUsers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  const end = start + pageSize.value;
+  return users.value.slice(start, end);
+});
+
+onMounted(() => {
+  fetchUsers();
+});
+</script>
+
+<style scoped>
+.admin-container {
+  padding: 20px;
+  min-height: calc(100vh - 60px);
+  background-color: #f5f7fa;
+}
+
+.admin-card {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pagination-container {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.avatar-cell {
+  display: flex;
+  align-items: center;
+}
+
+.avatar-image {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+</style>
 </file>
 
 <file path="FrontEnd/src/views/CurrencyExchangeView.vue">
@@ -1606,19 +2210,189 @@ onMounted(fetchArticles);
 </style>
 </file>
 
+<file path="FrontEnd/src/views/ProfileView.vue">
+<template>
+  <el-container class="profile-container">
+    <el-card class="profile-card">
+      <template #header>
+        <div class="card-header">
+          <span>个人资料</span>
+        </div>
+      </template>
+      
+      <el-form :model="form" label-width="100px" v-loading="loading">
+        <el-form-item label="用户名">
+          <el-input v-model="authStore.user!.username" disabled />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-tag>{{ authStore.user?.role }}</el-tag>
+        </el-form-item>
+
+        <el-form-item label="昵称">
+          <el-input v-model="form.nickname" placeholder="设置昵称" />
+        </el-form-item>
+
+        <el-form-item label="邮箱">
+          <el-input v-model="form.email" placeholder="绑定邮箱" />
+        </el-form-item>
+
+        <el-form-item label="头像URL">
+          <el-input v-model="form.avatar" placeholder="输入图片地址" />
+          <div v-if="form.avatar" class="avatar-preview">
+            <el-avatar :size="50" :src="form.avatar" />
+          </div>
+        </el-form-item>
+
+        <el-divider content-position="left">修改密码 (留空则不修改)</el-divider>
+
+        <el-form-item label="新密码">
+          <el-input 
+            v-model="form.password" 
+            type="password" 
+            placeholder="8位以上，含大小写字母和数字" 
+            show-password
+          />
+        </el-form-item>
+
+        <el-form-item>
+          <el-button type="primary" @click="handleUpdate">保存修改</el-button>
+          <el-button @click="resetForm">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, reactive, ref } from 'vue';
+import { useAuthStore } from '../store/auth';
+
+const authStore = useAuthStore();
+const loading = ref(false);
+
+const form = reactive({
+  nickname: '',
+  email: '',
+  avatar: '',
+  password: ''
+});
+
+// 初始化表单数据
+const initForm = () => {
+  if (authStore.user) {
+    form.nickname = authStore.user.nickname || '';
+    form.email = authStore.user.email || '';
+    form.avatar = authStore.user.avatar || '';
+    form.password = ''; // 密码默认不回显
+  }
+};
+
+onMounted(async () => {
+  loading.value = true;
+  // 确保获取最新数据
+  await authStore.fetchProfile();
+  initForm();
+  loading.value = false;
+});
+
+const handleUpdate = async () => {
+  // 构建 payload，如果密码为空字符串则不发送 password 字段
+  const payload: any = {
+    nickname: form.nickname,
+    email: form.email,
+    avatar: form.avatar
+  };
+  
+  if (form.password) {
+    payload.password = form.password;
+  }
+
+  try {
+    loading.value = true;
+    await authStore.updateProfile(payload);
+    ElMessage.success('个人资料更新成功');
+    form.password = ''; // 更新成功后清空密码框
+  } catch (error: any) {
+    ElMessage.error(error.message || '更新失败');
+  } finally {
+    loading.value = false;
+  }
+};
+
+const resetForm = () => {
+  initForm();
+};
+</script>
+
+<style scoped>
+.profile-container {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.profile-card {
+  width: 100%;
+  max-width: 600px;
+}
+.avatar-preview {
+  margin-top: 10px;
+}
+</style>
+</file>
+
 <file path="FrontEnd/src/App.vue">
 <template>
   <el-container>
     <el-header>
-      <el-menu :default-active="activeIndex" class="el-menu-demo" mode="horizontal"  :ellipsis="true" @select="handleSelect">
+      <el-menu 
+        :default-active="activeIndex" 
+        class="el-menu-demo" 
+        mode="horizontal" 
+        :ellipsis="true" 
+        @select="handleSelect"
+      >
         <el-menu-item index="home">首页</el-menu-item>
-        <el-menu-item index="currencyExchange">兑换货币</el-menu-item>
-        <el-menu-item index="news">查看新闻</el-menu-item>
-        <el-menu-item index="login" v-if="!authStore.isAuthenticated">登录</el-menu-item>
-        <el-menu-item index="register" v-if="!authStore.isAuthenticated">注册</el-menu-item>
-        <el-menu-item index="logout" v-if="authStore.isAuthenticated">退出</el-menu-item>
+        <el-menu-item index="currencyExchange">货币兑换</el-menu-item>
+        <el-menu-item index="news">新闻资讯</el-menu-item>
+        
+        <!-- 管理员菜单 -->
+        <el-submenu index="admin" v-if="authStore.user?.role === 'admin'">
+          <template #title>
+            <el-icon><Setting /></el-icon>
+            管理员
+          </template>
+          <el-menu-item index="adminUsers">用户管理</el-menu-item>
+        </el-submenu>
+        
+        <!-- 用户相关菜单 -->
+        <div class="user-menu" v-if="authStore.isAuthenticated">
+          <el-submenu index="user">
+            <template #title>
+              <el-avatar 
+                :size="32" 
+                :src="authStore.user?.avatar" 
+                style="margin-right: 8px;"
+              >
+                {{ authStore.user?.username?.charAt(0)?.toUpperCase() }}
+              </el-avatar>
+              {{ authStore.user?.nickname || authStore.user?.username }}
+              <el-tag v-if="authStore.user?.role === 'admin'" size="small" type="danger" style="margin-left: 8px;">
+                管理员
+              </el-tag>
+            </template>
+            <el-menu-item index="profile">个人资料</el-menu-item>
+            <el-menu-item index="logout">退出登录</el-menu-item>
+          </el-submenu>
+        </div>
+        
+        <div class="auth-menu" v-else>
+          <el-menu-item index="login">登录</el-menu-item>
+          <el-menu-item index="register">注册</el-menu-item>
+        </div>
       </el-menu>
     </el-header>
+    
     <el-main>
       <router-view></router-view>
     </el-main>
@@ -1626,25 +2400,80 @@ onMounted(fetchArticles);
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { Setting } from '@element-plus/icons-vue';
+import { onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from './store/auth';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const activeIndex = ref(route.name?.toString() || 'home');
+const activeIndex = ref('home');
 
+// 监听路由变化高亮菜单
 watch(route, (newRoute) => {
-  activeIndex.value = newRoute.name?.toString() || 'home';
+  updateActiveIndex(newRoute);
 });
 
+// 应用加载时，如果已登录但没有用户信息，尝试获取一次
+onMounted(() => {
+  updateActiveIndex(route);
+  if (authStore.isAuthenticated && !authStore.user) {
+    authStore.fetchProfile();
+  }
+});
+
+const updateActiveIndex = (currentRoute: any) => {
+  const routeName = currentRoute.name?.toString().toLowerCase();
+  switch (routeName) {
+    case 'home':
+      activeIndex.value = 'home';
+      break;
+    case 'currencyexchange':
+      activeIndex.value = 'currencyExchange';
+      break;
+    case 'news':
+    case 'newsdetail':
+      activeIndex.value = 'news';
+      break;
+    case 'profile':
+      activeIndex.value = 'profile';
+      break;
+    case 'adminusers':
+      activeIndex.value = 'adminUsers';
+      break;
+    default:
+      activeIndex.value = 'home';
+  }
+};
+
 const handleSelect = (key: string) => {
-  if ( key === 'logout') {
-    authStore.logout();
-    router.push({ name: 'Home' });
-  } else {
-    router.push({ name:  key.charAt(0).toUpperCase() +  key.slice(1) });
+  switch (key) {
+    case 'logout':
+      authStore.logout();
+      router.push({ name: 'Home' });
+      break;
+    case 'profile':
+      router.push({ name: 'Profile' });
+      break;
+    case 'adminUsers':
+      router.push({ name: 'AdminUsers' });
+      break;
+    case 'home':
+      router.push({ name: 'Home' });
+      break;
+    case 'currencyExchange':
+      router.push({ name: 'CurrencyExchange' });
+      break;
+    case 'news':
+      router.push({ name: 'News' });
+      break;
+    case 'login':
+      router.push({ name: 'Login' });
+      break;
+    case 'register':
+      router.push({ name: 'Register' });
+      break;
   }
 };
 </script>
@@ -1652,38 +2481,83 @@ const handleSelect = (key: string) => {
 <style scoped>
 .el-menu-demo {
   line-height: 60px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+}
+
+.auth-menu {
+  display: flex;
 }
 </style>
 </file>
 
 <file path="FrontEnd/src/axios.ts">
 import axios from 'axios';
+import { ElMessage } from 'element-plus';
+import { useAuthStore } from './store/auth';
 
 const instance = axios.create({
   baseURL: 'http://localhost:3080/api',
 });
 
+// 请求拦截器
 instance.interceptors.request.use(config => {
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = token;
-    console.log(token)
   }
   return config;
 });
+
+// 响应拦截器
+instance.interceptors.response.use(
+  response => {
+    return response;
+  },
+  error => {
+    if (error.response?.status === 401) {
+      // token 过期或无效
+      const authStore = useAuthStore();
+      authStore.logout();
+      ElMessage.error('登录已过期，请重新登录');
+      window.location.href = '/login';
+    } else if (error.response?.status === 403) {
+      // 权限不足
+      ElMessage.error('权限不足，无法访问此功能');
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
+    } else if (error.response?.status >= 500) {
+      ElMessage.error('服务器错误，请稍后重试');
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default instance;
 </file>
 
 <file path="FrontEnd/src/main.ts">
-import { createApp } from 'vue';
-import { createPinia } from 'pinia';
+import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css';
+import { createPinia } from 'pinia';
+import { createApp } from 'vue';
 import App from './App.vue';
 import router from './router';
 
 const app = createApp(App);
+
+// 注册所有图标
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component);
+}
+
 app.use(createPinia());
 app.use(ElementPlus);
 app.use(router);
@@ -2003,6 +2877,14 @@ services:
 volumes:
   mysql_data:
   redis_data:
+</file>
+
+<file path="package.json">
+{
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2"
+  }
+}
 </file>
 
 </files>

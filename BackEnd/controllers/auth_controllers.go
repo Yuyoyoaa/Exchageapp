@@ -25,6 +25,12 @@ func Register(ctx *gin.Context) {
 		return
 	}
 
+	// 验证角色合法性
+	if input.Role != "" && input.Role != "admin" && input.Role != "user" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role value"})
+		return
+	}
+
 	if !utils.ValidatePassword(input.Password) {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": "密码至少8位，必须包含大写字母、小写字母和数字",

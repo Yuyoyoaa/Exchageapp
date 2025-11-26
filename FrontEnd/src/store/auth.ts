@@ -110,14 +110,23 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('token');
   };
 
-  return {
-    token,
-    user,
-    isAuthenticated,
-    login,
-    register,
-    fetchProfile,
-    updateProfile,
-    logout
-  };
+ const checkAdminPermission = async (): Promise<boolean> => {
+  if (!user.value) {
+    await fetchProfile();
+  }
+  return user.value?.role === 'admin';
+};
+
+// 在 return 语句中添加这个方法
+return {
+  token,
+  user,
+  isAuthenticated,
+  login,
+  register,
+  fetchProfile,
+  updateProfile,
+  logout,
+  checkAdminPermission // 新增方法
+};
 });

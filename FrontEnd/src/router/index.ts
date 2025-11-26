@@ -1,14 +1,12 @@
-// FrontEnd/src/router/index.ts
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-// ... 保持原有引用 ...
 import Login from '../components/Login.vue';
 import Register from '../components/Register.vue';
+import { useAuthStore } from '../store/auth';
+import AdminUserView from '../views/AdminUserView.vue';
 import CurrencyExchangeView from '../views/CurrencyExchangeView.vue';
 import HomeView from '../views/HomeView.vue';
 import NewsDetailView from '../views/NewsDetailView.vue';
 import NewsView from '../views/NewsView.vue';
-// 新增引用
-import { useAuthStore } from '../store/auth';
 import ProfileView from '../views/ProfileView.vue';
 
 const routes: RouteRecordRaw[] = [
@@ -18,8 +16,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/news/:id', name: 'NewsDetail', component: NewsDetailView },
   { path: '/login', name: 'Login', component: Login },
   { path: '/register', name: 'Register', component: Register },
-  // 新增路由
   { path: '/profile', name: 'Profile', component: ProfileView, meta: { requiresAuth: true } },
+  { 
+    path: '/admin/users', 
+    name: 'AdminUsers', 
+    component: AdminUserView, 
+    meta: { requiresAuth: true, requiresAdmin: true } 
+  },
 ];
 
 const router = createRouter({
@@ -27,14 +30,51 @@ const router = createRouter({
   routes,
 });
 
-// 简单的路由守卫（可选，但推荐）
-router.beforeEach((to, from, next) => {
+// 路由守卫 - 认证检查和管理员权限检查
+// FrontEnd/src/router/index.ts
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore();
+  
+  // 检查是否需要登录
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    next({ name: 'Login' });
-  } else {
-    next();
+    next('/login');
+    return;
   }
+  
+  // 检查是否需要管理员权限
+  if (to.meta.requiresAdmin) {
+    if (!authStore.isAuthenticated) {
+      next('/login');
+      return;
+    }
+    
+    // 确保用户信息已加载
+    if (!authStore.user) {
+      try {
+        await authStore.fetchProfile();
+      } catch (error) {
+        next('/login');
+        return;
+      }
+    }
+    
+    // 检查管理员权限
+    if (authStore.user?.role !== 'admin') {
+      next('/');
+      return;
+    }
+  }
+  
+  next();
 });
+
+function checkAdminPermission(to: any, next: any) {
+  const authStore = useAuthStore();
+  if (authStore.user?.role !== 'admin') {
+    next('/');
+    return;
+  }
+  next();
+}
 
 export default router;

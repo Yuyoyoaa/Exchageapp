@@ -5,6 +5,6 @@ export interface Article {
     Content: string;
 }
 
-export interface Like{
-    likes: number
+export interface Like {
+    likes: number;
 }

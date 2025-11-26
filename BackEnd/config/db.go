@@ -31,7 +31,11 @@ func InitDB() {
 	global.Db = db
 
 	// 迁移模型
-	if err := global.Db.AutoMigrate(&models.User{}); err != nil {
+	if err := global.Db.AutoMigrate(
+		&models.User{},
+		&models.Article{},
+		&models.ExchangeRate{},
+	); err != nil {
 		log.Fatalf("Failed to migrate database, got error: %v", err)
 	}
 

@@ -16,11 +16,11 @@ func SetupRouter() *gin.Engine {
 	// 允许跨域请求
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}, // 添加 PATCH
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,           // 是否允许发送身份信息如cookie
-		MaxAge:           12 * time.Hour, /// 12小时内不再进行预检请求，直接发起跨域请求
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
 	}))
 
 	// 用户注册与登录
@@ -31,25 +31,37 @@ func SetupRouter() *gin.Engine {
 	}
 
 	api := r.Group("/api")
-	api.GET("/exchangeRates", controllers.GetExchangeRates)
-	// 使用中间件才能使用的api
-	api.Use(middlewares.AuthMiddleWare())
 	{
-		api.POST("/exchangeRates", controllers.CreateExchangeRate)
-		api.POST("/articles", controllers.CreateArticle)
-		api.GET("/articles", controllers.GetArticles)
-		api.GET("articles/:id", controllers.GetArticleByID)
+		// 不需要认证的公共接口
+		api.GET("/exchangeRates", controllers.GetExchangeRates)
 
-		api.POST("/articles/:id/like", controllers.LikeArticle)
-		api.GET("/articles/:id/like", controllers.GetArticleLikes)
-	}
+		// 需要认证的接口组
+		authenticated := api.Group("")
+		authenticated.Use(middlewares.AuthMiddleWare())
+		{
+			authenticated.POST("/exchangeRates", controllers.CreateExchangeRate)
+			authenticated.POST("/articles", controllers.CreateArticle)
+			authenticated.GET("/articles", controllers.GetArticles)
+			authenticated.GET("/articles/:id", controllers.GetArticleByID)
+			authenticated.POST("/articles/:id/like", controllers.LikeArticle)
+			authenticated.GET("/articles/:id/like", controllers.GetArticleLikes)
 
-	// 用户信息获取与更新接口
-	user := api.Group("/user")
-	user.Use(middlewares.AuthMiddleWare())
-	{
-		user.GET("/profile", controllers.GetProfile)
-		user.PUT("/profile", controllers.UpdateProfile)
+			// 用户信息接口
+			user := authenticated.Group("/user")
+			{
+				user.GET("/profile", controllers.GetProfile)
+				user.PUT("/profile", controllers.UpdateProfile)
+			}
+
+			// 管理员专用接口组
+			adminGroup := authenticated.Group("/admin")
+			adminGroup.Use(middlewares.AdminMiddleware())
+			{
+				adminGroup.GET("/users", controllers.GetUserList)
+				adminGroup.PATCH("/users/:id/role", controllers.UpdateUserRole)
+				adminGroup.DELETE("/users/:id", controllers.DeleteUser)
+			}
+		}
 	}
 
 	return r

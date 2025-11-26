@@ -29,8 +29,6 @@ func main() {
 		port = ":" + port
 	}
 
-	r.Run(port)
-
 	srv := &http.Server{ // http服务器实例
 		Addr:    port,
 		Handler: r,

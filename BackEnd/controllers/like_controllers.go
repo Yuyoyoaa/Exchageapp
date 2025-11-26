@@ -13,7 +13,9 @@ func LikeArticle(ctx *gin.Context) {
 
 	likeKey := "article:" + articleID + ":likes"
 
-	if err := global.RedisDB.Incr(ctx.Request.Context(), likeKey).Err(); err != nil {
+	// 获取点赞后的数量
+	likes, err := global.RedisDB.Incr(ctx.Request.Context(), likeKey).Result()
+	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -21,7 +23,8 @@ func LikeArticle(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": "Successfully Like",
+		"message": "Successfully Liked",
+		"likes":   likes, // 返回点赞数量保持一致性
 	})
 }
 
