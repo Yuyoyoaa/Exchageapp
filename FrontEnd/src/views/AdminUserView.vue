@@ -46,47 +46,23 @@
           </template>
         </el-table-column>
       </el-table>
-
-      <div class="pagination-container">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 20, 50, 100]"
-          :total="total"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="handleSizeChange"
-          @current-change="handleCurrentChange"
-        />
-      </div>
     </el-card>
 
     <!-- 修改角色确认对话框 -->
-    <el-dialog
-      v-model="roleDialogVisible"
-      title="修改用户角色"
-      width="400px"
-    >
+    <el-dialog v-model="roleDialogVisible" title="修改用户角色" width="400px">
       <p>确定要将用户 <strong>{{ selectedUser?.username }}</strong> 的角色修改为 <strong>{{ selectedUser?.role === 'admin' ? '普通用户' : '管理员' }}</strong> 吗？</p>
       <template #footer>
         <el-button @click="roleDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmChangeRole" :loading="roleLoading">
-          确认修改
-        </el-button>
+        <el-button type="primary" @click="confirmChangeRole" :loading="roleLoading">确认修改</el-button>
       </template>
     </el-dialog>
 
     <!-- 删除用户确认对话框 -->
-    <el-dialog
-      v-model="deleteDialogVisible"
-      title="删除用户"
-      width="400px"
-    >
+    <el-dialog v-model="deleteDialogVisible" title="删除用户" width="400px">
       <p style="color: #f56c6c;">警告：此操作将永久删除用户 <strong>{{ selectedUser?.username }}</strong>，且无法恢复！</p>
       <template #footer>
         <el-button @click="deleteDialogVisible = false">取消</el-button>
-        <el-button type="danger" @click="confirmDeleteUser" :loading="deleteLoading">
-          确认删除
-        </el-button>
+        <el-button type="danger" @click="confirmDeleteUser" :loading="deleteLoading">确认删除</el-button>
       </template>
     </el-dialog>
   </el-container>
@@ -94,7 +70,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import axios from '../axios';
 import { useAuthStore } from '../store/auth';
 
@@ -111,24 +87,17 @@ interface User {
 const authStore = useAuthStore();
 const loading = ref(false);
 const users = ref<User[]>([]);
-const total = ref(0);
-const currentPage = ref(1);
-const pageSize = ref(10);
-
-// 对话框相关
 const roleDialogVisible = ref(false);
 const deleteDialogVisible = ref(false);
 const selectedUser = ref<User | null>(null);
 const roleLoading = ref(false);
 const deleteLoading = ref(false);
 
-// 获取用户列表
 const fetchUsers = async () => {
   loading.value = true;
   try {
     const response = await axios.get('/admin/users');
     users.value = response.data;
-    total.value = response.data.length;
   } catch (error: any) {
     ElMessage.error('获取用户列表失败: ' + (error.response?.data?.error || error.message));
   } finally {
@@ -136,13 +105,10 @@ const fetchUsers = async () => {
   }
 };
 
-// 刷新用户列表
 const refreshUsers = () => {
-  currentPage.value = 1;
   fetchUsers();
 };
 
-// 修改角色
 const handleChangeRole = (user: User) => {
   selectedUser.value = user;
   roleDialogVisible.value = true;
@@ -154,13 +120,10 @@ const confirmChangeRole = async () => {
   roleLoading.value = true;
   try {
     const newRole = selectedUser.value.role === 'admin' ? 'user' : 'admin';
-    await axios.patch(`/admin/users/${selectedUser.value.ID}/role`, {
-      role: newRole
-    });
-    
+    await axios.patch(`/admin/users/${selectedUser.value.ID}/role`, { role: newRole });
     ElMessage.success('角色修改成功');
     roleDialogVisible.value = false;
-    await fetchUsers(); // 刷新列表
+    await fetchUsers();
   } catch (error: any) {
     ElMessage.error('修改角色失败: ' + (error.response?.data?.error || error.message));
   } finally {
@@ -168,7 +131,6 @@ const confirmChangeRole = async () => {
   }
 };
 
-// 删除用户
 const handleDeleteUser = (user: User) => {
   selectedUser.value = user;
   deleteDialogVisible.value = true;
@@ -180,10 +142,9 @@ const confirmDeleteUser = async () => {
   deleteLoading.value = true;
   try {
     await axios.delete(`/admin/users/${selectedUser.value.ID}`);
-    
     ElMessage.success('用户删除成功');
     deleteDialogVisible.value = false;
-    await fetchUsers(); // 刷新列表
+    await fetchUsers();
   } catch (error: any) {
     ElMessage.error('删除用户失败: ' + (error.response?.data?.error || error.message));
   } finally {
@@ -191,30 +152,10 @@ const confirmDeleteUser = async () => {
   }
 };
 
-// 分页处理
-const handleSizeChange = (newSize: number) => {
-  pageSize.value = newSize;
-  currentPage.value = 1;
-  // 这里可以添加分页请求逻辑
-};
-
-const handleCurrentChange = (newPage: number) => {
-  currentPage.value = newPage;
-  // 这里可以添加分页请求逻辑
-};
-
-// 日期格式化
 const formatDate = (dateString: string) => {
   if (!dateString) return '';
   return new Date(dateString).toLocaleString('zh-CN');
 };
-
-// 计算分页后的数据（前端分页，如果数据量大建议后端分页）
-const paginatedUsers = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value;
-  const end = start + pageSize.value;
-  return users.value.slice(start, end);
-});
 
 onMounted(() => {
   fetchUsers();
@@ -238,23 +179,5 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.pagination-container {
-  margin-top: 20px;
-  display: flex;
-  justify-content: center;
-}
-
-.avatar-cell {
-  display: flex;
-  align-items: center;
-}
-
-.avatar-image {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  margin-right: 8px;
 }
 </style>

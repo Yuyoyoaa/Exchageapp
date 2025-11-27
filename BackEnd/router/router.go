@@ -58,6 +58,7 @@ func SetupRouter() *gin.Engine {
 		{
 			user.GET("/profile", controllers.GetProfile)
 			user.PUT("/profile", controllers.UpdateProfile)
+			user.GET("/favorites", controllers.GetUserFavorites)
 		}
 
 		// ===== 管理员 API =====

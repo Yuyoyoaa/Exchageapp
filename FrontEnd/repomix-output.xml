@@ -1,0 +1,2506 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  components/
+    Login.vue
+    Register.vue
+  router/
+    index.ts
+  store/
+    auth.ts
+  types/
+    Article.d.ts
+    User.d.ts
+  views/
+    AdminArticleView.vue
+    AdminUserView.vue
+    CurrencyExchangeView.vue
+    HomeView.vue
+    NewsDetailView.vue
+    NewsView.vue
+    ProfileView.vue
+  App.vue
+  axios.ts
+  main.ts
+  shims-vue.d.ts
+  vite-env.d.ts
+__VLS_types.d.ts
+index.html
+package.json
+tsconfig.json
+tsconfig.node.json
+vite.config.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/components/Login.vue">
+<template>  
+  <div class="auth-container">  
+    <el-form :model="form" class="auth-form" label-position="top" @submit.prevent="login">  
+      <h2 style="text-align: center; margin-bottom: 20px;">用户登录</h2>
+      <el-form-item label="用户名">  
+        <el-input v-model="form.username" placeholder="请输入用户名" />  
+      </el-form-item>  
+      <el-form-item label="密码">  
+        <el-input v-model="form.password" type="password" placeholder="请输入密码" show-password />  
+      </el-form-item>  
+      <el-form-item>  
+        <el-button type="primary" native-type="submit" style="width: 100%" :loading="loading">登录</el-button>  
+      </el-form-item>  
+    </el-form>  
+  </div>  
+</template>  
+  
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '../store/auth';
+
+const form = ref({
+  username: '',
+  password: '',
+});
+
+const loading = ref(false);
+const authStore = useAuthStore();
+const router = useRouter();
+
+const login = async () => {
+  loading.value = true;
+  try {
+    await authStore.login(form.value.username, form.value.password);
+    ElMessage.success('登录成功');
+    router.push({ name: 'News' });
+  } catch (error: any) {
+    // 这里的 error.message 已经是 store 中处理过的后端 error 字段
+    ElMessage.error(error.message || '登录失败，请检查网络或重试。');
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
+  
+<style scoped>
+.auth-container {  
+  display: flex;  
+  justify-content: center;  
+  align-items: center;  
+  height: 80vh; 
+  background-color: #f5f5f5; 
+  padding: 20px;  
+  box-sizing: border-box; 
+}  
+  
+.auth-form {  
+  width: 100%;  
+  max-width: 360px; 
+  padding: 30px;  
+  background-color: #fff;  
+  border-radius: 8px;  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
+}  
+</style>
+</file>
+
+<file path="src/components/Register.vue">
+<template>
+  <div class="auth-container">
+    <el-form :model="form" class="auth-form" label-position="top" @submit.prevent="register">
+      <h2 style="text-align: center; margin-bottom: 20px;">用户注册</h2>
+      
+      <el-form-item label="用户名 (必填)" required>
+        <el-input v-model="form.username" placeholder="唯一用户名" />
+      </el-form-item>
+      
+      <el-form-item label="密码 (必填)" required>
+        <el-input v-model="form.password" type="password" placeholder="8位以上，含大小写字母和数字" show-password />
+      </el-form-item>
+
+      <el-form-item label="昵称">
+        <el-input v-model="form.nickname" placeholder="您的昵称" />
+      </el-form-item>
+
+      <el-form-item label="邮箱">
+        <el-input v-model="form.email" placeholder="example@email.com" />
+      </el-form-item>
+
+      <el-form-item label="头像 URL">
+        <el-input v-model="form.avatar" placeholder="https://example.com/avatar.png" />
+      </el-form-item>
+
+      <el-button type="primary" native-type="submit" style="width: 100%" :loading="loading">注册</el-button>
+    </el-form>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '../store/auth';
+
+const form = ref({
+  username: '',
+  password: '',
+  nickname: '',
+  email: '',
+  avatar: ''
+});
+
+const loading = ref(false);
+const authStore = useAuthStore();
+const router = useRouter();
+
+const register = async () => {
+  if (!form.value.username || !form.value.password) {
+    ElMessage.warning('用户名和密码是必填项');
+    return;
+  }
+
+  loading.value = true;
+  try {
+    await authStore.register({
+      username: form.value.username,
+      password: form.value.password,
+      nickname: form.value.nickname || undefined,
+      email: form.value.email || undefined,
+      avatar: form.value.avatar || undefined
+    });
+    ElMessage.success('注册成功！');
+    router.push({ name: 'News' });
+  } catch (error: any) {
+    ElMessage.error(error.message || '注册失败，请重试。');
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
+
+<style scoped>
+.auth-container {  
+  display: flex;  
+  justify-content: center;  
+  align-items: center;  
+  min-height: 80vh; 
+  background-color: #f5f5f5; 
+  padding: 20px;  
+  box-sizing: border-box; 
+}  
+  
+.auth-form {  
+  width: 100%;  
+  max-width: 400px; 
+  padding: 30px;  
+  background-color: #fff;  
+  border-radius: 8px;  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
+}  
+</style>
+</file>
+
+<file path="src/router/index.ts">
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
+import Login from '../components/Login.vue';
+import Register from '../components/Register.vue';
+import { useAuthStore } from '../store/auth';
+import AdminArticleView from '../views/AdminArticleView.vue'; // 新增：引入文章管理页面
+import AdminUserView from '../views/AdminUserView.vue';
+import CurrencyExchangeView from '../views/CurrencyExchangeView.vue';
+import HomeView from '../views/HomeView.vue';
+import NewsDetailView from '../views/NewsDetailView.vue';
+import NewsView from '../views/NewsView.vue';
+import ProfileView from '../views/ProfileView.vue';
+
+const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'Home', component: HomeView },
+  { path: '/exchange', name: 'CurrencyExchange', component: CurrencyExchangeView },
+  { path: '/news', name: 'News', component: NewsView },
+  { path: '/news/:id', name: 'NewsDetail', component: NewsDetailView },
+  { path: '/login', name: 'Login', component: Login },
+  { path: '/register', name: 'Register', component: Register },
+  { 
+    path: '/profile', 
+    name: 'Profile', 
+    component: ProfileView, 
+    meta: { requiresAuth: true } 
+  },
+  { 
+    path: '/admin/users', 
+    name: 'AdminUsers', 
+    component: AdminUserView, 
+    meta: { requiresAuth: true, requiresAdmin: true } 
+  },
+  { 
+    path: '/admin/articles', 
+    name: 'AdminArticles', 
+    component: AdminArticleView, // 新增：文章管理路由
+    meta: { requiresAuth: true, requiresAdmin: true } 
+  },
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+});
+
+router.beforeEach(async (to, from, next) => {
+  const authStore = useAuthStore();
+  
+  // 检查是否需要登录
+  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+    next('/login');
+    return;
+  }
+  
+  // 检查是否需要管理员权限
+  if (to.meta.requiresAdmin) {
+    if (!authStore.isAuthenticated) {
+      next('/login');
+      return;
+    }
+    
+    // 确保用户信息已加载
+    if (!authStore.user) {
+      try {
+        await authStore.fetchProfile();
+      } catch (error) {
+        next('/login');
+        return;
+      }
+    }
+    
+    // 检查管理员权限
+    if (authStore.user?.role !== 'admin') {
+      next('/');
+      return;
+    }
+  }
+  
+  next();
+});
+
+export default router;
+</file>
+
+<file path="src/store/auth.ts">
+// FrontEnd/src/store/auth.ts
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import axios from '../axios';
+
+export interface User {
+  ID: number;
+  username: string;
+  role: string;
+  nickname: string;
+  email: string;
+  avatar: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+}
+
+export interface RegisterPayload {
+  username: string;
+  password: string;
+  nickname?: string;
+  email?: string;
+  avatar?: string;
+}
+
+export interface UpdateProfilePayload {
+  nickname?: string;
+  email?: string;
+  avatar?: string;
+  password?: string;
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref<string | null>(localStorage.getItem('token'));
+  const user = ref<User | null>(null);
+
+  const isAuthenticated = computed(() => !!token.value);
+
+  const fetchProfile = async () => {
+    if (!token.value) return;
+    try {
+      const response = await axios.get<User>('/user/profile');
+      user.value = response.data;
+    } catch (error) {
+      console.error('Failed to fetch profile', error);
+      throw error;
+    }
+  };
+
+  const login = async (username: string, password: string) => {
+    try {
+      const response = await axios.post('/auth/login', { username, password });
+      token.value = response.data.token;
+      localStorage.setItem('token', token.value || '');
+      await fetchProfile();
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
+    }
+  };
+
+  const register = async (payload: RegisterPayload) => {
+    try {
+      const response = await axios.post('/auth/register', payload);
+      token.value = response.data.token;
+      localStorage.setItem('token', token.value || '');
+      if (response.data.user) {
+        user.value = response.data.user;
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
+    }
+  };
+
+  const updateProfile = async (payload: UpdateProfilePayload) => {
+    try {
+      const response = await axios.put<User>('/user/profile', payload);
+      user.value = response.data;
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
+    }
+  };
+
+  const logout = () => {
+    token.value = null;
+    user.value = null;
+    localStorage.removeItem('token');
+  };
+
+  const checkAdminPermission = async (): Promise<boolean> => {
+    if (!user.value) {
+      await fetchProfile();
+    }
+    return user.value?.role === 'admin';
+  };
+
+  return {
+    token,
+    user,
+    isAuthenticated,
+    login,
+    register,
+    fetchProfile,
+    updateProfile,
+    logout,
+    checkAdminPermission
+  };
+});
+</file>
+
+<file path="src/types/Article.d.ts">
+export interface Article {
+  ID: number;
+  Title: string;
+  Content: string;
+  Preview: string;
+  Cover?: string;
+  LikesCount: number;
+  ViewsCount: number;
+  AuthorID: number;
+  CategoryID?: number;
+  Status: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+}
+
+export interface Comment {
+  ID: number;
+  ArticleID: number;
+  UserID: number;
+  UserName: string;
+  Content: string;
+  ParentID?: number;
+  CreatedAt?: string;
+}
+
+export interface Category {
+  ID: number;
+  Name: string;
+}
+
+export interface LikeResponse {
+  message: string;
+  likesCount: number;
+}
+</file>
+
+<file path="src/types/User.d.ts">
+export interface User {
+  ID: number; // 确保与后端 uint 类型兼容
+  username: string;
+  nickname: string;
+  email: string;
+  role: string;
+  avatar: string;
+  CreatedAt: string;
+  UpdatedAt?: string;
+}
+
+export interface AdminUserListResponse {
+  users: User[];
+  total: number;
+}
+
+export interface ChangeRoleRequest {
+  role: 'admin' | 'user';
+}
+
+export interface ChangeRoleResponse {
+  message: string;
+  user_id: number;
+  new_role: string;
+}
+</file>
+
+<file path="src/views/AdminArticleView.vue">
+<template>
+  <el-container class="admin-container">
+    <el-card class="admin-card">
+      <template #header>
+        <div class="card-header">
+          <h2>文章与分类管理</h2>
+          <div class="header-actions">
+            <el-button type="success" @click="categoryDialogVisible = true">管理分类</el-button>
+            <el-button type="primary" @click="openCreateDialog">发布文章</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="articles" v-loading="loading" stripe style="width: 100%">
+        <el-table-column prop="ID" label="ID" width="60" />
+        <el-table-column prop="Title" label="标题" show-overflow-tooltip />
+        <el-table-column label="分类" width="120">
+          <template #default="scope">
+            <el-tag size="small">{{ getCategoryName(scope.row.CategoryID) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="ViewsCount" label="浏览" width="80" />
+        <el-table-column prop="CreatedAt" label="发布时间" width="160">
+          <template #default="scope">
+            {{ formatDate(scope.row.CreatedAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180">
+          <template #default="scope">
+            <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination">
+         <el-pagination layout="prev, pager, next" :total="100" /> </div>
+    </el-card>
+
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑文章' : '发布文章'" width="700px">
+      <el-form :model="form" label-width="80px">
+        <el-form-item label="标题">
+          <el-input v-model="form.title" placeholder="请输入文章标题" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="form.categoryId" placeholder="选择分类" style="width: 100%">
+            <el-option v-for="c in categories" :key="c.ID" :label="c.Name" :value="c.ID" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="封面URL">
+          <el-input v-model="form.cover" placeholder="图片地址" />
+        </el-form-item>
+        <el-form-item label="简介">
+          <el-input v-model="form.preview" type="textarea" :rows="2" placeholder="文章预览文字" />
+        </el-form-item>
+        <el-form-item label="内容">
+          <el-input v-model="form.content" type="textarea" :rows="10" placeholder="支持 HTML 内容" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitArticle">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="categoryDialogVisible" title="分类管理" width="500px">
+      <div class="category-input">
+        <el-input v-model="newCategoryName" placeholder="新分类名称" />
+        <el-button type="primary" @click="addCategory" :disabled="!newCategoryName">添加</el-button>
+      </div>
+      <el-table :data="categories" height="300px">
+        <el-table-column prop="ID" label="ID" width="60" />
+        <el-table-column prop="Name" label="名称" />
+        <el-table-column label="操作" width="100">
+          <template #default="scope">
+            <el-button type="danger" link @click="deleteCategory(scope.row.ID)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { onMounted, reactive, ref } from 'vue';
+import axios from '../axios';
+
+const articles = ref([]);
+const categories = ref<any[]>([]);
+const loading = ref(false);
+const dialogVisible = ref(false);
+const categoryDialogVisible = ref(false);
+const isEdit = ref(false);
+const currentId = ref<number | null>(null);
+
+const form = reactive({
+  title: '',
+  content: '',
+  preview: '',
+  cover: '',
+  categoryId: null as number | null
+});
+
+const newCategoryName = ref('');
+
+const fetchData = async () => {
+  loading.value = true;
+  try {
+    const [artRes, catRes] = await Promise.all([
+      axios.get('/articles?limit=100'), // Get all for admin demo
+      axios.get('/categories')
+    ]);
+    articles.value = artRes.data;
+    categories.value = catRes.data;
+  } catch (e) {
+    ElMessage.error('加载数据失败');
+  } finally {
+    loading.value = false;
+  }
+};
+
+const getCategoryName = (id: number) => {
+  const cat = categories.value.find(c => c.ID === id);
+  return cat ? cat.Name : '未分类';
+};
+
+const openCreateDialog = () => {
+  isEdit.value = false;
+  currentId.value = null;
+  form.title = '';
+  form.content = '';
+  form.preview = '';
+  form.cover = '';
+  form.categoryId = null;
+  dialogVisible.value = true;
+};
+
+const handleEdit = (row: any) => {
+  isEdit.value = true;
+  currentId.value = row.ID;
+  form.title = row.Title;
+  form.content = row.Content;
+  form.preview = row.Preview;
+  form.cover = row.Cover;
+  form.categoryId = row.CategoryID;
+  dialogVisible.value = true;
+};
+
+const submitArticle = async () => {
+  try {
+    const payload = {
+      title: form.title,
+      content: form.content,
+      preview: form.preview,
+      cover: form.cover,
+      categoryId: form.categoryId,
+      status: 'published'
+    };
+
+    if (isEdit.value && currentId.value) {
+      await axios.put(`/admin/articles/${currentId.value}`, payload);
+      ElMessage.success('更新成功');
+    } else {
+      await axios.post('/admin/articles', payload);
+      ElMessage.success('发布成功');
+    }
+    dialogVisible.value = false;
+    fetchData();
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '操作失败');
+  }
+};
+
+const handleDelete = (row: any) => {
+  ElMessageBox.confirm('确定要删除这篇文章吗?', '警告', {
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    type: 'warning',
+  }).then(async () => {
+    try {
+      await axios.delete(`/admin/articles/${row.ID}`);
+      ElMessage.success('删除成功');
+      fetchData();
+    } catch (e) {
+      ElMessage.error('删除失败');
+    }
+  });
+};
+
+const addCategory = async () => {
+  try {
+    await axios.post('/admin/categories', { name: newCategoryName.value });
+    ElMessage.success('分类添加成功');
+    newCategoryName.value = '';
+    const res = await axios.get('/categories');
+    categories.value = res.data;
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '添加失败');
+  }
+};
+
+const deleteCategory = async (id: number) => {
+  try {
+    await axios.delete(`/admin/categories/${id}`);
+    ElMessage.success('分类已删除');
+    const res = await axios.get('/categories');
+    categories.value = res.data;
+  } catch (e) {
+    ElMessage.error('删除失败');
+  }
+};
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr || dateStr.startsWith('0001')) return '刚刚';
+  return new Date(dateStr).toLocaleString();
+};
+
+onMounted(fetchData);
+</script>
+
+<style scoped>
+.admin-container { padding: 20px; background-color: #f5f7fa; min-height: calc(100vh - 60px); }
+.admin-card { max-width: 1200px; margin: 0 auto; }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.header-actions { display: flex; gap: 10px; }
+.pagination { margin-top: 20px; text-align: right; }
+.category-input { display: flex; gap: 10px; margin-bottom: 20px; }
+</style>
+</file>
+
+<file path="src/views/AdminUserView.vue">
+<template>
+  <el-container class="admin-container">
+    <el-card class="admin-card">
+      <template #header>
+        <div class="card-header">
+          <h2>用户管理</h2>
+          <el-button type="primary" @click="refreshUsers">刷新</el-button>
+        </div>
+      </template>
+
+      <el-table :data="users" v-loading="loading" style="width: 100%">
+        <el-table-column prop="ID" label="ID" width="80" />
+        <el-table-column prop="username" label="用户名" width="120" />
+        <el-table-column prop="nickname" label="昵称" width="120" />
+        <el-table-column prop="email" label="邮箱" width="200" />
+        <el-table-column prop="role" label="角色" width="100">
+          <template #default="scope">
+            <el-tag :type="scope.row.role === 'admin' ? 'danger' : 'primary'">
+              {{ scope.row.role === 'admin' ? '管理员' : '普通用户' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="CreatedAt" label="注册时间" width="180">
+          <template #default="scope">
+            {{ formatDate(scope.row.CreatedAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="scope">
+            <el-button 
+              size="small" 
+              :type="scope.row.role === 'admin' ? 'warning' : 'success'"
+              @click="handleChangeRole(scope.row)"
+              :disabled="scope.row.username === authStore.user?.username"
+            >
+              {{ scope.row.role === 'admin' ? '降为用户' : '设为管理员' }}
+            </el-button>
+            <el-button 
+              size="small" 
+              type="danger" 
+              @click="handleDeleteUser(scope.row)"
+              :disabled="scope.row.username === authStore.user?.username"
+            >
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 修改角色确认对话框 -->
+    <el-dialog v-model="roleDialogVisible" title="修改用户角色" width="400px">
+      <p>确定要将用户 <strong>{{ selectedUser?.username }}</strong> 的角色修改为 <strong>{{ selectedUser?.role === 'admin' ? '普通用户' : '管理员' }}</strong> 吗？</p>
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmChangeRole" :loading="roleLoading">确认修改</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 删除用户确认对话框 -->
+    <el-dialog v-model="deleteDialogVisible" title="删除用户" width="400px">
+      <p style="color: #f56c6c;">警告：此操作将永久删除用户 <strong>{{ selectedUser?.username }}</strong>，且无法恢复！</p>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="confirmDeleteUser" :loading="deleteLoading">确认删除</el-button>
+      </template>
+    </el-dialog>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, ref } from 'vue';
+import axios from '../axios';
+import { useAuthStore } from '../store/auth';
+
+interface User {
+  ID: number;
+  username: string;
+  nickname: string;
+  email: string;
+  role: string;
+  avatar: string;
+  CreatedAt: string;
+}
+
+const authStore = useAuthStore();
+const loading = ref(false);
+const users = ref<User[]>([]);
+const roleDialogVisible = ref(false);
+const deleteDialogVisible = ref(false);
+const selectedUser = ref<User | null>(null);
+const roleLoading = ref(false);
+const deleteLoading = ref(false);
+
+const fetchUsers = async () => {
+  loading.value = true;
+  try {
+    const response = await axios.get('/admin/users');
+    users.value = response.data;
+  } catch (error: any) {
+    ElMessage.error('获取用户列表失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    loading.value = false;
+  }
+};
+
+const refreshUsers = () => {
+  fetchUsers();
+};
+
+const handleChangeRole = (user: User) => {
+  selectedUser.value = user;
+  roleDialogVisible.value = true;
+};
+
+const confirmChangeRole = async () => {
+  if (!selectedUser.value) return;
+  
+  roleLoading.value = true;
+  try {
+    const newRole = selectedUser.value.role === 'admin' ? 'user' : 'admin';
+    await axios.patch(`/admin/users/${selectedUser.value.ID}/role`, { role: newRole });
+    ElMessage.success('角色修改成功');
+    roleDialogVisible.value = false;
+    await fetchUsers();
+  } catch (error: any) {
+    ElMessage.error('修改角色失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    roleLoading.value = false;
+  }
+};
+
+const handleDeleteUser = (user: User) => {
+  selectedUser.value = user;
+  deleteDialogVisible.value = true;
+};
+
+const confirmDeleteUser = async () => {
+  if (!selectedUser.value) return;
+  
+  deleteLoading.value = true;
+  try {
+    await axios.delete(`/admin/users/${selectedUser.value.ID}`);
+    ElMessage.success('用户删除成功');
+    deleteDialogVisible.value = false;
+    await fetchUsers();
+  } catch (error: any) {
+    ElMessage.error('删除用户失败: ' + (error.response?.data?.error || error.message));
+  } finally {
+    deleteLoading.value = false;
+  }
+};
+
+const formatDate = (dateString: string) => {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleString('zh-CN');
+};
+
+onMounted(() => {
+  fetchUsers();
+});
+</script>
+
+<style scoped>
+.admin-container {
+  padding: 20px;
+  min-height: calc(100vh - 60px);
+  background-color: #f5f7fa;
+}
+
+.admin-card {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+</style>
+</file>
+
+<file path="src/views/CurrencyExchangeView.vue">
+<template>  
+  <el-container style="min-height: calc(100vh - 60px);">  
+    <el-main>
+      <el-card class="exchange-card">
+        <template #header>
+          <div class="card-header">
+            <h2>货币兑换</h2>
+            <el-button type="primary" @click="fetchExchangeRates" :loading="loading">
+              刷新汇率
+            </el-button>
+          </div>
+        </template>
+
+        <el-form :model="form" class="exchange-form">
+          <el-row :gutter="20">
+            <el-col :span="10">
+              <el-form-item label="从货币" label-width="80px">
+                <el-select v-model="form.fromCurrency" placeholder="选择货币" style="width: 100%;">
+                  <el-option v-for="c in currencies" :key="c" :value="c" :label="c" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+
+            <el-col :span="10">
+              <el-form-item label="到货币" label-width="80px">
+                <el-select v-model="form.toCurrency" placeholder="选择货币" style="width: 100%;">
+                  <el-option v-for="c in currencies" :key="c" :value="c" :label="c" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+
+            <el-col :span="4">
+              <el-button type="success" style="width:100%;margin-top:32px" @click="swapCurrencies">
+                ⇄ 交换
+              </el-button>
+            </el-col>
+          </el-row>
+
+          <el-form-item label="金额" label-width="80px">
+            <el-input v-model="form.amount" type="number" @input="calculateResult">
+              <template #prepend>{{ form.fromCurrency }}</template>
+            </el-input>
+          </el-form-item>
+
+          <el-form-item>
+            <el-button type="primary" style="width:100%" @click="exchange">立即兑换</el-button>
+          </el-form-item>
+        </el-form>
+
+        <!-- 结果展示 -->
+        <div v-if="result !== null" class="result-panel">
+          <el-alert
+            title="兑换结果"
+            type="success"
+            :description="`${form.amount} ${form.fromCurrency} = ${result.toFixed(2)} ${form.toCurrency}`"
+            :closable="false"
+            show-icon
+          />
+          <p class="rate-info">
+            当前汇率：1 {{ form.fromCurrency }} = {{ currentRate }} {{ form.toCurrency }}
+          </p>
+        </div>
+
+        <!-- 汇率表 -->
+        <div class="rates-table" v-if="exchangeRates.length">
+          <h3>最新汇率</h3>
+          <el-table :data="exchangeRates">
+            <el-table-column prop="fromCurrency" label="从货币" width="120" />
+            <el-table-column prop="toCurrency" label="到货币" width="120" />
+            <el-table-column prop="rate" label="汇率" />
+            <el-table-column label="日期">
+              <template #default="s">
+                {{ formatDate(s.row.date) }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+      </el-card>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { computed, onMounted, ref } from 'vue';
+import axios from '../axios';
+
+interface ExchangeRate {
+  id: number;
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  date: string;
+}
+
+const form = ref({
+  fromCurrency: 'USD',
+  toCurrency: 'CNY',
+  amount: 100
+});
+
+const exchangeRates = ref<ExchangeRate[]>([]);
+const currencies = ref<string[]>([]);
+const result = ref<number | null>(null);
+const loading = ref(false);
+
+const fetchExchangeRates = async () => {
+  loading.value = true;
+  try {
+    const res = await axios.get('/exchangeRates');
+    exchangeRates.value = res.data;
+
+    const cur = new Set<string>();
+    exchangeRates.value.forEach(r => {
+      cur.add(r.fromCurrency);
+      cur.add(r.toCurrency);
+    });
+    currencies.value = [...cur];
+  } catch {
+    ElMessage.error("获取汇率失败");
+  }
+  loading.value = false;
+};
+
+const calculateResult = () => {
+  const rate = exchangeRates.value.find(
+    r => r.fromCurrency === form.value.fromCurrency && r.toCurrency === form.value.toCurrency
+  );
+  result.value = rate ? form.value.amount * rate.rate : null;
+};
+
+const currentRate = computed(() => {
+  const rate = exchangeRates.value.find(
+    r => r.fromCurrency === form.value.fromCurrency && r.toCurrency === form.value.toCurrency
+  );
+  return rate ? rate.rate : 'N/A';
+});
+
+const swapCurrencies = () => {
+  [form.value.fromCurrency, form.value.toCurrency] =
+    [form.value.toCurrency, form.value.fromCurrency];
+  calculateResult();
+};
+
+const exchange = () => {
+  ElMessage.success("兑换成功（演示，无后端功能）");
+};
+
+const formatDate = (d: string) => new Date(d).toLocaleString("zh-CN");
+
+onMounted(fetchExchangeRates);
+</script>
+</file>
+
+<file path="src/views/HomeView.vue">
+<template>  
+  <el-container class="home-container">  
+    <el-main>
+      <div class="welcome-section">
+        <div class="welcome-content">
+          <h1 class="title">🚀 欢迎使用蓝鼠兑换系统</h1>
+          <p class="description">一站式货币兑换与金融资讯平台</p>
+          
+          <div class="feature-cards">
+            <el-row :gutter="20">
+              <el-col :xs="24" :sm="8" class="feature-col">
+                <el-card class="feature-card" shadow="hover">
+                  <div class="feature-icon">💱</div>
+                  <h3>实时汇率</h3>
+                  <p>获取最新的货币兑换汇率，支持多种货币对</p>
+                  <el-button type="primary" @click="router.push('/exchange')">开始兑换</el-button>
+                </el-card>
+              </el-col>
+              
+              <el-col :xs="24" :sm="8" class="feature-col">
+                <el-card class="feature-card" shadow="hover">
+                  <div class="feature-icon">📰</div>
+                  <h3>金融资讯</h3>
+                  <p>浏览最新的金融新闻和市场分析文章</p>
+                  <el-button type="primary" @click="router.push('/news')">阅读资讯</el-button>
+                </el-card>
+              </el-col>
+              
+              <el-col :xs="24" :sm="8" class="feature-col">
+                <el-card class="feature-card" shadow="hover">
+                  <div class="feature-icon">👤</div>
+                  <h3>个人中心</h3>
+                  <p>管理您的个人信息和交易记录</p>
+                  <el-button 
+                    type="primary" 
+                    @click="authStore.isAuthenticated ? router.push('/profile') : router.push('/login')"
+                  >
+                    {{ authStore.isAuthenticated ? '个人中心' : '立即登录' }}
+                  </el-button>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+
+          <!-- 热门文章预览 -->
+          <div class="hot-articles" v-if="hotArticles.length">
+            <h2 class="section-title">🔥 热门文章</h2>
+            <el-row :gutter="20">
+              <el-col 
+                v-for="article in hotArticles" 
+                :key="article.ID" 
+                :xs="24" 
+                :sm="8" 
+                class="article-col"
+              >
+                <el-card class="article-preview-card" shadow="hover" @click="viewArticle(article.ID)">
+                  <div class="article-preview">
+                    <h4>{{ article.Title }}</h4>
+                    <p class="article-excerpt">{{ article.Preview }}</p>
+                    <div class="article-meta">
+                      <span>👍 {{ article.LikesCount }}</span>
+                      <span>👁 {{ article.ViewsCount }}</span>
+                    </div>
+                  </div>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+
+          <!-- 快速操作 -->
+          <div class="quick-actions">
+            <h2 class="section-title">⚡ 快速操作</h2>
+            <div class="action-buttons">
+              <el-button 
+                type="primary" 
+                size="large" 
+                @click="router.push('/exchange')"
+                icon="ShoppingCart"
+              >
+                货币兑换
+              </el-button>
+              <el-button 
+                type="success" 
+                size="large" 
+                @click="router.push('/news')"
+                icon="Reading"
+              >
+                浏览资讯
+              </el-button>
+              <el-button 
+                v-if="!authStore.isAuthenticated"
+                type="warning" 
+                size="large" 
+                @click="router.push('/register')"
+                icon="User"
+              >
+                立即注册
+              </el-button>
+              <el-button 
+                v-if="authStore.user?.role === 'admin'"
+                type="danger" 
+                size="large" 
+                @click="router.push('/admin/users')"
+                icon="Setting"
+              >
+                管理后台
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-main>
+  </el-container>  
+</template>  
+  
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import axios from '../axios';
+import { useAuthStore } from '../store/auth';
+import type { Article } from "../types/Article";
+
+const router = useRouter();
+const authStore = useAuthStore();
+const hotArticles = ref<Article[]>([]);
+
+const fetchHotArticles = async () => {
+  try {
+    const response = await axios.get<Article[]>('/articles/hot');
+    hotArticles.value = response.data.slice(0, 3); // 只显示前3篇
+  } catch (error) {
+    console.error('Failed to load hot articles:', error);
+  }
+};
+
+const viewArticle = (id: number) => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.warning('请先登录后再查看文章');
+    return;
+  }
+  router.push({ name: 'NewsDetail', params: { id: id.toString() } });
+};
+
+onMounted(() => {
+  fetchHotArticles();
+});
+</script>  
+  
+<style scoped>
+.home-container {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: calc(100vh - 60px);
+}
+
+.welcome-section {
+  padding: 60px 20px;
+}
+
+.welcome-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.title {
+  color: white;
+  font-size: 3rem;
+  font-weight: bold;
+  margin-bottom: 1rem;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.description {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1.5rem;
+  margin-bottom: 3rem;
+}
+
+.feature-cards {
+  margin: 4rem 0;
+}
+
+.feature-col {
+  margin-bottom: 2rem;
+}
+
+.feature-card {
+  height: 100%;
+  text-align: center;
+  transition: transform 0.3s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-5px);
+}
+
+.feature-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.feature-card h3 {
+  margin: 1rem 0;
+  color: #333;
+}
+
+.feature-card p {
+  color: #666;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.hot-articles {
+  margin: 4rem 0;
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.section-title {
+  text-align: center;
+  color: #333;
+  margin-bottom: 2rem;
+  font-size: 2rem;
+}
+
+.article-col {
+  margin-bottom: 1.5rem;
+}
+
+.article-preview-card {
+  height: 100%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.article-preview-card:hover {
+  box-shadow: 0 6px 25px rgba(0,0,0,0.15);
+  transform: translateY(-2px);
+}
+
+.article-preview h4 {
+  margin-bottom: 1rem;
+  color: #333;
+  line-height: 1.4;
+  height: 2.8em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.article-excerpt {
+  color: #666;
+  line-height: 1.6;
+  height: 4.8em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  margin-bottom: 1rem;
+}
+
+.article-meta {
+  display: flex;
+  justify-content: space-between;
+  color: #999;
+  font-size: 0.9em;
+}
+
+.quick-actions {
+  margin: 4rem 0;
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .title {
+    font-size: 2rem;
+  }
+  
+  .description {
+    font-size: 1.2rem;
+  }
+  
+  .action-buttons {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .action-buttons .el-button {
+    width: 100%;
+    max-width: 300px;
+  }
+}
+</style>
+</file>
+
+<file path="src/views/NewsDetailView.vue">
+<template>
+  <el-container class="news-detail-container">
+    <el-main>
+      <div class="content-wrapper">
+        
+        <!-- ===== 文章内容 ===== -->
+        <el-card v-if="article" class="article-card">
+          <div class="article-header">
+            <h1 class="title">{{ article.title }}</h1>
+
+            <div class="meta-row">
+              <el-tag size="small" v-if="categoryName">{{ categoryName }}</el-tag>
+
+              <span class="meta-item">
+                <el-icon><Calendar /></el-icon>
+                {{ formatDate(article.createdAt) }}
+              </span>
+
+              <span class="meta-item">
+                <el-icon><View /></el-icon>
+                {{ article.viewsCount }}
+              </span>
+
+              <span class="meta-item">
+                <el-icon><Star /></el-icon>
+                {{ article.likesCount }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="article.cover" class="article-cover">
+            <el-image :src="article.cover" fit="cover" class="cover-image" />
+          </div>
+
+          <el-divider />
+
+          <div class="article-content ql-editor" v-html="article.content"></div>
+
+          <div class="action-bar">
+            <el-button :type="hasLiked ? 'primary' : 'default'" circle size="large" @click="likeArticle">
+              <el-icon><Pointer /></el-icon>
+            </el-button>
+            <span class="action-label">点赞</span>
+
+            <el-button :type="isFavorited ? 'warning' : 'default'" circle size="large" @click="toggleFavorite" style="margin-left: 20px;">
+              <el-icon><Collection /></el-icon>
+            </el-button>
+            <span class="action-label">{{ isFavorited ? '已收藏' : '收藏' }}</span>
+          </div>
+        </el-card>
+
+        <!-- ===== 评论区 ===== -->
+        <el-card class="comments-card">
+          <template #header>
+            <div class="clearfix">
+              <span>评论 ({{ comments.length }})</span>
+            </div>
+          </template>
+
+          <!-- 评论输入 -->
+          <div v-if="authStore.isAuthenticated" class="comment-input-area">
+            <el-input
+              v-model="newComment"
+              type="textarea"
+              :rows="3"
+              placeholder="写下你的看法..."
+            />
+            <div class="comment-submit">
+              <el-button type="primary" @click="submitComment(null)">发表评论</el-button>
+            </div>
+          </div>
+
+          <el-alert
+            v-else
+            title="请登录后参与评论"
+            type="info"
+            center
+            show-icon
+            :closable="false"
+            style="margin-bottom:20px;"
+          />
+
+          <!-- 评论列表 -->
+          <div class="comment-list">
+            <div v-for="comment in comments" :key="comment.id" class="comment-item">
+
+              <div class="comment-avatar">
+                <el-avatar :size="40">{{ comment.userName?.charAt(0)?.toUpperCase() || 'U' }}</el-avatar>
+              </div>
+
+              <div class="comment-body">
+                <div class="comment-info">
+                  <span class="username">{{ comment.userName }}</span>
+                  <span class="timestamp">{{ formatDate(comment.createdAt) }}</span>
+                </div>
+
+                <div class="comment-text">
+                  <span v-if="comment.parentId" class="reply-tag">
+                    回复 @{{ getParentUser(comment.parentId) }}:
+                  </span>
+                  {{ comment.content }}
+                </div>
+
+                <div class="comment-actions">
+                  <el-button link size="small" type="primary"
+                    @click="toggleReply(comment.id)"
+                    v-if="authStore.isAuthenticated">
+                    回复
+                  </el-button>
+
+                  <el-button link size="small" type="danger"
+                    v-if="canDelete(comment)"
+                    @click="deleteComment(comment.id)">
+                    删除
+                  </el-button>
+                </div>
+
+                <div v-if="replyBoxId === comment.id" class="reply-box">
+                  <el-input v-model="replyContent" size="small" placeholder="回复内容..." />
+                  <el-button type="primary" size="small" @click="submitComment(comment.id)" style="margin-top:5px;">
+                    发送
+                  </el-button>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        </el-card>
+
+      </div>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { Calendar, Collection, Pointer, Star, View } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
+import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
+import axios from "../axios";
+import { useAuthStore } from "../store/auth";
+
+const route = useRoute();
+const authStore = useAuthStore();
+
+const article = ref<any>(null);
+const comments = ref<any[]>([]);
+const categories = ref<any[]>([]);
+const newComment = ref("");
+const replyContent = ref("");
+const replyBoxId = ref<number | null>(null);
+
+const hasLiked = ref(false);
+const isFavorited = ref(false);
+
+const fetchArticle = async () => {
+  try {
+    const res = await axios.get(`/articles/${route.params.id}`);
+    article.value = res.data;
+
+    const catRes = await axios.get("/categories");
+    categories.value = catRes.data;
+  } catch {
+    ElMessage.error("文章加载失败");
+  }
+};
+
+const categoryName = computed(() => {
+  if (!article.value) return "";
+  const c = categories.value.find((x) => x.id === article.value.categoryId);
+  return c?.name || "未分类";
+});
+
+const fetchComments = async () => {
+  const res = await axios.get(`/articles/${route.params.id}/comments`);
+  comments.value = res.data;
+};
+
+const getParentUser = (pid: number) => {
+  const parent = comments.value.find((c) => c.id === pid);
+  return parent?.userName || "";
+};
+
+const formatDate = (str: string) => {
+  if (!str || str.startsWith("0001")) return "刚刚";
+  return new Date(str).toLocaleString("zh-CN");
+};
+
+const submitComment = async (parentId: number | null) => {
+  const content = parentId ? replyContent.value : newComment.value;
+  if (!content.trim()) return ElMessage.warning("请输入内容");
+
+  await axios.post(`/articles/${route.params.id}/comments`, {
+    content,
+    parentId,
+  });
+
+  newComment.value = "";
+  replyContent.value = "";
+  replyBoxId.value = null;
+
+  fetchComments();
+  ElMessage.success("评论成功");
+};
+
+const toggleReply = (id: number) => {
+  replyBoxId.value = replyBoxId.value === id ? null : id;
+};
+
+const canDelete = (comment: any) => {
+  if (!authStore.user) return false;
+  return authStore.user.role === "admin" || authStore.user.id === comment.userId;
+};
+
+const deleteComment = async (id: number) => {
+  await axios.delete(`/comments/${id}`);
+  fetchComments();
+  ElMessage.success("已删除");
+};
+
+const likeArticle = async () => {
+  if (!authStore.isAuthenticated) return ElMessage.warning("请登录");
+  await axios.post(`/articles/${route.params.id}/like`);
+  article.value.likesCount++;
+};
+
+const toggleFavorite = async () => {
+  if (!authStore.isAuthenticated) return ElMessage.warning("请登录");
+  await axios.post(`/articles/${route.params.id}/favorite`);
+  isFavorited.value = !isFavorited.value;
+};
+
+onMounted(() => {
+  fetchArticle();
+  fetchComments();
+});
+</script>
+
+<style scoped>
+.news-detail-container { background: #f5f7fa; min-height: calc(100vh - 60px); padding: 20px; }
+.content-wrapper { max-width: 800px; margin: 0 auto; }
+.article-card { margin-bottom: 20px; border-radius: 8px; }
+.title { font-size: 2rem; margin-bottom: 15px; color: #333; }
+.meta-row { display: flex; gap: 15px; color: #999; font-size: 0.9rem; align-items: center; margin-bottom: 20px; }
+.meta-item { display: flex; align-items: center; gap: 4px; }
+.article-cover { margin-bottom: 20px; border-radius: 4px; overflow: hidden; }
+.article-content { font-size: 1.1rem; line-height: 1.8; color: #444; min-height: 200px; }
+.action-bar { margin-top: 40px; display: flex; justify-content: center; align-items: center; }
+.action-label { margin-left: 8px; color: #666; }
+
+.comments-card { border-radius: 8px; }
+.comment-item { display: flex; gap: 15px; padding: 15px 0; border-bottom: 1px solid #eee; }
+.comment-info { display: flex; justify-content: space-between; margin-bottom: 5px; }
+.username { font-weight: bold; color: #333; }
+.timestamp { font-size: 0.8rem; color: #999; }
+.comment-body { flex: 1; }
+.comment-text { color: #555; line-height: 1.5; }
+.reply-tag { color: #409EFF; margin-right: 5px; }
+.comment-actions { margin-top: 5px; }
+.reply-box { margin-top: 10px; background: #f9f9f9; padding: 10px; border-radius: 4px; }
+.comment-submit { margin-top: 10px; text-align: right; }
+</style>
+</file>
+
+<file path="src/views/NewsView.vue">
+<template>
+  <el-container>
+    <el-main>
+      <!-- 分类筛选和热门文章 -->
+      <div class="filter-section">
+        <el-select v-model="categoryFilter" placeholder="选择分类" @change="handleCategoryChange">
+          <el-option label="全部" value="" />
+          <el-option v-for="category in categories" :key="category.ID" 
+            :label="category.Name" :value="category.ID" />
+        </el-select>
+        <el-button type="primary" @click="fetchHotArticles">热门文章</el-button>
+      </div>
+
+      <!-- 文章列表 -->
+      <div v-if="articles && articles.length">
+        <el-card v-for="article in articles" :key="article.ID" class="article-card">
+          <div class="article-header">
+            <h2>{{ article.Title }}</h2>
+            <span class="article-meta">
+              浏览: {{ article.ViewsCount }} | 点赞: {{ article.LikesCount }}
+            </span>
+          </div>
+          <p class="article-preview">{{ article.Preview }}</p>
+          <div class="article-footer">
+            <el-button text @click="viewDetail(article.ID)">阅读更多</el-button>
+            <span class="article-time">{{ formatDate(article.CreatedAt) }}</span>
+          </div>
+        </el-card>
+      </div>
+      <div v-else class="no-data">暂无文章</div>
+
+      <!-- 分页 -->
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[5, 10, 20]"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import axios from '../axios';
+import type { Article, Category } from "../types/Article";
+
+const articles = ref<Article[]>([]);
+const categories = ref<Category[]>([]);
+const categoryFilter = ref('');
+const currentPage = ref(1);
+const pageSize = ref(10);
+const total = ref(0);
+const router = useRouter();
+
+const fetchArticles = async () => {
+  try {
+    const params: any = {
+      page: currentPage.value,
+      limit: pageSize.value
+    };
+    if (categoryFilter.value) {
+      params.category = categoryFilter.value;
+    }
+    const response = await axios.get<{ data: Article[], total: number }>('/articles', { params });
+    articles.value = response.data.data;
+    total.value = response.data.total;
+  } catch (error) {
+    console.error('Failed to load articles:', error);
+    ElMessage.error('加载文章失败');
+  }
+};
+
+const fetchCategories = async () => {
+  try {
+    const response = await axios.get<Category[]>('/categories');
+    categories.value = response.data;
+  } catch (error) {
+    console.error('Failed to load categories:', error);
+  }
+};
+
+const fetchHotArticles = async () => {
+  try {
+    const response = await axios.get<Article[]>('/articles/hot');
+    articles.value = response.data;
+    categoryFilter.value = '';
+    currentPage.value = 1;
+  } catch (error) {
+    console.error('Failed to load hot articles:', error);
+    ElMessage.error('加载热门文章失败');
+  }
+};
+
+const handleCategoryChange = () => {
+  currentPage.value = 1;
+  fetchArticles();
+};
+
+const handleSizeChange = (newSize: number) => {
+  pageSize.value = newSize;
+  currentPage.value = 1;
+  fetchArticles();
+};
+
+const handleCurrentChange = (newPage: number) => {
+  currentPage.value = newPage;
+  fetchArticles();
+};
+
+const viewDetail = (id: number) => {
+  router.push({ name: 'NewsDetail', params: { id: id.toString() } });
+};
+
+const formatDate = (dateString?: string) => {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleDateString('zh-CN');
+};
+
+onMounted(() => {
+  fetchArticles();
+  fetchCategories();
+});
+
+watch([currentPage, pageSize], () => {
+  fetchArticles();
+});
+</script>
+
+<style scoped>
+.filter-section {
+  margin-bottom: 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.article-card {
+  margin: 20px 0;
+  padding: 20px;
+}
+
+.article-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.article-header h2 {
+  margin: 0;
+  color: #333;
+}
+
+.article-meta {
+  color: #666;
+  font-size: 0.9em;
+}
+
+.article-preview {
+  color: #555;
+  line-height: 1.6;
+  margin-bottom: 15px;
+}
+
+.article-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.article-time {
+  color: #999;
+  font-size: 0.8em;
+}
+
+.pagination-container {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.no-data {
+  text-align: center;
+  font-size: 1.2em;
+  color: #999;
+  padding: 40px 0;
+}
+</style>
+</file>
+
+<file path="src/views/ProfileView.vue">
+<template>
+  <el-container class="profile-container">
+    <div class="profile-wrapper">
+      <el-tabs type="border-card">
+        <el-tab-pane label="个人资料">
+          <el-form :model="form" label-width="100px" v-loading="loading" class="profile-form">
+             <el-form-item label="用户名">
+                <el-input v-model="authStore.user!.username" disabled />
+             </el-form-item>
+             <el-form-item label="身份">
+                <el-tag :type="authStore.user!.role === 'admin' ? 'danger' : 'success'">
+                  {{ authStore.user!.role === 'admin' ? '管理员' : '普通用户' }}
+                </el-tag>
+             </el-form-item>
+             <el-form-item label="昵称">
+                <el-input v-model="form.nickname" />
+             </el-form-item>
+             <el-form-item label="邮箱">
+                <el-input v-model="form.email" />
+             </el-form-item>
+             <el-form-item label="头像URL">
+                <el-input v-model="form.avatar" />
+             </el-form-item>
+             <el-form-item label="修改密码">
+                <el-input v-model="form.password" type="password" placeholder="留空则不修改" />
+             </el-form-item>
+             <el-form-item>
+                <el-button type="primary" @click="handleUpdate">保存</el-button>
+             </el-form-item>
+          </el-form>
+        </el-tab-pane>
+
+        <el-tab-pane label="我的收藏">
+          <div v-if="favorites.length > 0" class="fav-list">
+            <el-card 
+              v-for="fav in favorites" 
+              :key="fav.ID" 
+              class="fav-item" 
+              shadow="hover"
+            >
+              <div class="fav-content" @click="router.push(`/news/${fav.ID}`)">
+                <div class="fav-info">
+                  <h3>{{ fav.Title }}</h3>
+                  <p>{{ fav.Preview }}</p>
+                  <span class="fav-date">{{ formatDate(fav.CreatedAt) }}</span>
+                </div>
+                <div v-if="fav.Cover" class="fav-img">
+                   <el-image :src="fav.Cover" fit="cover" />
+                </div>
+              </div>
+            </el-card>
+          </div>
+          <el-empty v-else description="暂无收藏文章" />
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import axios from '../axios';
+import { useAuthStore } from '../store/auth';
+
+const authStore = useAuthStore();
+const router = useRouter();
+
+const loading = ref(false);
+const favorites = ref<any[]>([]);
+
+const form = reactive({
+  nickname: '',
+  email: '',
+  avatar: '',
+  password: '',
+});
+
+const initForm = () => {
+  if (authStore.user) {
+    form.nickname = authStore.user.nickname || '';
+    form.email = authStore.user.email || '';
+    form.avatar = authStore.user.avatar || '';
+    form.password = ''; 
+  }
+};
+
+const fetchFavorites = async () => {
+  try {
+    const res = await axios.get('/user/favorites');
+    favorites.value = res.data;
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '加载收藏列表失败');
+  }
+};
+
+const handleUpdate = async () => {
+  loading.value = true;
+  try {
+    const payload: any = {
+      nickname: form.nickname,
+      email: form.email,
+      avatar: form.avatar,
+    };
+    if (form.password) {
+      payload.password = form.password;
+    }
+
+    await axios.put('/user/profile', payload);
+    await authStore.fetchProfile(); // Reload user info
+    ElMessage.success('资料更新成功');
+    form.password = ''; // Clear password field after successful update
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '资料更新失败');
+  } finally {
+    loading.value = false;
+  }
+};
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr || dateStr.startsWith('0001')) return 'N/A';
+  return new Date(dateStr).toLocaleDateString('zh-CN');
+}
+
+onMounted(async () => {
+  if (authStore.isAuthenticated) {
+    loading.value = true;
+    await authStore.fetchProfile();
+    initForm();
+    await fetchFavorites(); // Fetch favorites on mount
+    loading.value = false;
+  }
+});
+</script>
+
+<style scoped>
+.profile-container { display: flex; justify-content: center; padding: 40px 20px; background: #f5f7fa; min-height: 80vh; }
+.profile-wrapper { width: 100%; max-width: 800px; }
+.profile-form { max-width: 500px; padding: 20px; }
+
+/* My Favorites List Styles */
+.fav-list { display: flex; flex-direction: column; gap: 10px; }
+.fav-item { margin-bottom: 10px; cursor: pointer; border-radius: 4px; }
+.fav-item:hover { background-color: #fcfcfc; }
+
+.fav-content { display: flex; justify-content: space-between; align-items: flex-start; padding: 10px; }
+.fav-info { flex: 1; min-width: 0; padding-right: 15px; }
+
+.fav-info h3 { margin: 0 0 8px 0; color: #303133; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-info p { color: #909399; font-size: 0.9rem; margin: 0 0 8px 0; line-height: 1.5; height: 3em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.fav-date { font-size: 0.8rem; color: #C0C4CC; }
+
+.fav-img { width: 120px; height: 80px; flex-shrink: 0; border-radius: 4px; overflow: hidden; }
+.fav-img .el-image { width: 100%; height: 100%; object-fit: cover; }
+</style>
+</file>
+
+<file path="src/App.vue">
+<template>
+  <el-container>
+    <el-header>
+      <el-menu 
+        :default-active="activeIndex" 
+        class="el-menu-demo" 
+        mode="horizontal" 
+        :ellipsis="false" 
+        @select="handleSelect"
+        router
+      >
+        <el-menu-item index="/" style="font-weight: bold; color: #409EFF;">
+          💰 蓝鼠兑换
+        </el-menu-item>
+        
+        <el-menu-item index="/">首页</el-menu-item>
+        <el-menu-item index="/exchange">货币兑换</el-menu-item>
+        <el-menu-item index="/news">新闻资讯</el-menu-item>
+        
+        <el-submenu index="admin" v-if="authStore.user?.role === 'admin'">
+          <template #title>
+            <el-icon><Setting /></el-icon>
+            管理员
+          </template>
+          <el-menu-item index="/admin/users">用户管理</el-menu-item>
+          <el-menu-item index="/admin/articles">文章管理</el-menu-item> </el-submenu>
+        
+        <div class="flex-grow"></div>
+        
+        <div class="user-menu" v-if="authStore.isAuthenticated">
+          <el-submenu index="user">
+            <template #title>
+              <el-avatar 
+                :size="32" 
+                :src="authStore.user?.avatar" 
+                style="margin-right: 8px;"
+              >
+                {{ authStore.user?.username?.charAt(0)?.toUpperCase() || 'U' }}
+              </el-avatar>
+              {{ authStore.user?.nickname || authStore.user?.username }}
+              <el-tag v-if="authStore.user?.role === 'admin'" size="small" type="danger" style="margin-left: 8px;">
+                管理员
+              </el-tag>
+            </template>
+            <el-menu-item index="/profile">个人中心</el-menu-item>
+            <el-menu-item index="logout">退出登录</el-menu-item>
+          </el-submenu>
+        </div>
+        
+        <div class="auth-menu" v-else>
+          <el-menu-item index="/login">登录</el-menu-item>
+          <el-menu-item index="/register">注册</el-menu-item>
+        </div>
+      </el-menu>
+    </el-header>
+    
+    <el-main style="min-height: calc(100vh - 60px);">
+      <router-view></router-view>
+    </el-main>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { Setting } from '@element-plus/icons-vue';
+import { onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from './store/auth';
+
+const router = useRouter();
+const route = useRoute();
+const authStore = useAuthStore();
+const activeIndex = ref('/');
+
+// 监听路由变化高亮菜单
+watch(route, (newRoute) => {
+  updateActiveIndex(newRoute);
+});
+
+// 应用加载时，如果已登录但没有用户信息，尝试获取一次
+onMounted(() => {
+  updateActiveIndex(route);
+  if (authStore.isAuthenticated && !authStore.user) {
+    authStore.fetchProfile().catch(() => {
+      // 如果获取用户信息失败，可能是token过期，清除token
+      authStore.logout();
+    });
+  }
+});
+
+const updateActiveIndex = (currentRoute: any) => {
+  // 如果是嵌套路由或参数路由，确保高亮对应的主菜单
+  if (currentRoute.path.startsWith('/admin')) {
+    // 保持 admin 子菜单高亮逻辑由 element-plus 自动处理，或者手动指定
+    activeIndex.value = currentRoute.path;
+  } else if (currentRoute.path.startsWith('/news')) {
+    activeIndex.value = '/news';
+  } else {
+    activeIndex.value = currentRoute.path;
+  }
+};
+
+const handleSelect = (key: string) => {
+  if (key === 'logout') {
+    authStore.logout();
+    router.push({ name: 'Home' });
+  } else if (key.startsWith('/')) {
+    // 路由跳转由 router 属性处理
+  }
+};
+</script>
+
+<style scoped>
+.el-menu-demo {
+  line-height: 60px;
+  display: flex;
+  align-items: center;
+}
+
+.flex-grow {
+  flex-grow: 1;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+}
+
+.auth-menu {
+  display: flex;
+}
+
+:deep(.el-menu--horizontal) {
+  border-bottom: none;
+}
+
+:deep(.el-menu--horizontal > .el-menu-item) {
+  border-bottom: 2px solid transparent;
+}
+
+:deep(.el-menu--horizontal > .el-menu-item.is-active) {
+  border-bottom-color: #409EFF;
+}
+</style>
+</file>
+
+<file path="src/axios.ts">
+import axios from 'axios';
+import { ElMessage } from 'element-plus';
+import { useAuthStore } from './store/auth';
+
+const instance = axios.create({
+  baseURL: 'http://localhost:3080/api',
+  timeout: 10000,
+});
+
+// 请求拦截器
+instance.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = token;
+  }
+  return config;
+}, error => {
+  return Promise.reject(error);
+});
+
+// 响应拦截器
+instance.interceptors.response.use(
+  response => {
+    return response;
+  },
+  error => {
+    if (error.response?.status === 401) {
+      // token 过期或无效
+      const authStore = useAuthStore();
+      authStore.logout();
+      ElMessage.error('登录已过期，请重新登录');
+      window.location.href = '/login';
+    } else if (error.response?.status === 403) {
+      // 权限不足
+      ElMessage.error('权限不足，无法访问此功能');
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
+    } else if (error.response?.status >= 500) {
+      ElMessage.error('服务器错误，请稍后重试');
+    } else if (error.code === 'ECONNABORTED') {
+      ElMessage.error('请求超时，请检查网络连接');
+    }
+    return Promise.reject(error);
+  }
+);
+
+
+export default instance;
+</file>
+
+<file path="src/main.ts">
+import * as ElementPlusIconsVue from '@element-plus/icons-vue';
+import ElementPlus from 'element-plus';
+import 'element-plus/dist/index.css';
+import { createPinia } from 'pinia';
+import { createApp } from 'vue';
+import App from './App.vue';
+import router from './router';
+
+const app = createApp(App);
+
+// 注册所有图标
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component);
+}
+
+app.use(createPinia());
+app.use(ElementPlus);
+app.use(router);
+app.mount('#app');
+</file>
+
+<file path="src/shims-vue.d.ts">
+// client/src/shims-vue.d.ts
+declare module '*.vue' {
+    import { DefineComponent } from 'vue';
+    const component: DefineComponent<{}, {}, any>;
+    export default component;
+  }
+</file>
+
+<file path="src/vite-env.d.ts">
+/// <reference types="vite/client" />
+</file>
+
+<file path="__VLS_types.d.ts">
+// @ts-nocheck
+
+type __VLS_IntrinsicElements = __VLS_PickNotAny<import('vue/jsx-runtime').JSX.IntrinsicElements, __VLS_PickNotAny<JSX.IntrinsicElements, Record<string, any>>>;
+type __VLS_Element = __VLS_PickNotAny<import('vue/jsx-runtime').JSX.Element, JSX.Element>;
+
+type __VLS_IsAny<T> = 0 extends 1 & T ? true : false;
+type __VLS_PickNotAny<A, B> = __VLS_IsAny<A> extends true ? B : A;
+
+type __VLS_Prettify<T> = { [K in keyof T]: T[K]; } & {};
+
+type __VLS_OmitKeepDiscriminatedUnion<T, K extends keyof any> =
+	T extends any
+		? Pick<T, Exclude<keyof T, K>>
+		: never;
+
+type __VLS_GlobalComponents =
+	__VLS_PickNotAny<import('vue').GlobalComponents, {}>
+	& __VLS_PickNotAny<import('@vue/runtime-core').GlobalComponents, {}>
+	& __VLS_PickNotAny<import('@vue/runtime-dom').GlobalComponents, {}>
+	& Pick<typeof import('vue'),
+		'Transition'
+		| 'TransitionGroup'
+		| 'KeepAlive'
+		| 'Suspense'
+		| 'Teleport'
+	>;
+
+declare const __VLS_intrinsicElements: __VLS_IntrinsicElements;
+
+// v-for
+declare function __VLS_getVForSourceType(source: number): [number, number, number][];
+declare function __VLS_getVForSourceType(source: string): [string, number, number][];
+declare function __VLS_getVForSourceType<T extends any[]>(source: T): [
+	T[number], // item
+	number, // key
+	number, // index
+][];
+declare function __VLS_getVForSourceType<T extends { [Symbol.iterator](): Iterator<any> }>(source: T): [
+	T extends { [Symbol.iterator](): Iterator<infer T1> } ? T1 : never, // item 
+	number, // key
+	undefined, // index
+][];
+declare function __VLS_getVForSourceType<T>(source: T): [
+	T[keyof T], // item
+	keyof T, // key
+	number, // index
+][];
+
+declare function __VLS_getSlotParams<T>(slot: T): Parameters<__VLS_PickNotAny<NonNullable<T>, (...args: any[]) => any>>;
+declare function __VLS_getSlotParam<T>(slot: T): Parameters<__VLS_PickNotAny<NonNullable<T>, (...args: any[]) => any>>[0];
+declare function __VLS_directiveFunction<T>(dir: T):
+	T extends import('vue').ObjectDirective<infer E, infer V> | import('vue').FunctionDirective<infer E, infer V> ? (value: V) => void
+	: T;
+declare function __VLS_withScope<T, K>(ctx: T, scope: K): ctx is T & K;
+declare function __VLS_makeOptional<T>(t: T): { [K in keyof T]?: T[K] };
+
+type __VLS_SelfComponent<N, C> = string extends N ? {} : N extends string ? { [P in N]: C } : {};
+type __VLS_WithComponent<N0 extends string, LocalComponents, N1 extends string, N2 extends string, N3 extends string> =
+	N1 extends keyof LocalComponents ? N1 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N1] } :
+	N2 extends keyof LocalComponents ? N2 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N2] } :
+	N3 extends keyof LocalComponents ? N3 extends N0 ? Pick<LocalComponents, N0> : { [K in N0]: LocalComponents[N3] } :
+	N1 extends keyof __VLS_GlobalComponents ? N1 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N1] } :
+	N2 extends keyof __VLS_GlobalComponents ? N2 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N2] } :
+	N3 extends keyof __VLS_GlobalComponents ? N3 extends N0 ? Pick<__VLS_GlobalComponents, N0> : { [K in N0]: __VLS_GlobalComponents[N3] } :
+	{ [K in N0]: unknown }
+
+type __VLS_FillingEventArg_ParametersLength<E extends (...args: any) => any> = __VLS_IsAny<Parameters<E>> extends true ? -1 : Parameters<E>['length'];
+type __VLS_FillingEventArg<E> = E extends (...args: any) => any ? __VLS_FillingEventArg_ParametersLength<E> extends 0 ? ($event?: undefined) => ReturnType<E> : E : E;
+declare function __VLS_asFunctionalComponent<T, K = T extends new (...args: any) => any ? InstanceType<T> : unknown>(t: T, instance?: K):
+	T extends new (...args: any) => any
+	? (props: (K extends { $props: infer Props } ? Props : any) & Record<string, unknown>, ctx?: {
+		attrs?: any,
+		slots?: K extends { $slots: infer Slots } ? Slots : any,
+		emit?: K extends { $emit: infer Emit } ? Emit : any
+	}) => __VLS_Element & { __ctx?: typeof ctx & { props?: typeof props; expose?(exposed: K): void; } }
+	: T extends () => any ? (props: {}, ctx?: any) => ReturnType<T>
+	: T extends (...args: any) => any ? T
+	: (_: {} & Record<string, unknown>, ctx?: any) => { __ctx?: { attrs?: any, expose?: any, slots?: any, emit?: any, props?: {} & Record<string, unknown> } };
+declare function __VLS_elementAsFunctionalComponent<T>(t: T): (_: T & Record<string, unknown>, ctx?: any) => { __ctx?: { attrs?: any, expose?: any, slots?: any, emit?: any, props?: T & Record<string, unknown> } };
+declare function __VLS_functionalComponentArgsRest<T extends (...args: any) => any>(t: T): Parameters<T>['length'] extends 2 ? [any] : [];
+declare function __VLS_pickEvent<E1, E2>(emitEvent: E1, propEvent: E2): __VLS_FillingEventArg<
+	__VLS_PickNotAny<
+		__VLS_AsFunctionOrAny<E2>,
+		__VLS_AsFunctionOrAny<E1>
+	>
+> | undefined;
+declare function __VLS_pickFunctionalComponentCtx<T, K>(comp: T, compInstance: K): __VLS_PickNotAny<
+	'__ctx' extends keyof __VLS_PickNotAny<K, {}> ? K extends { __ctx?: infer Ctx } ? Ctx : never : any
+	, T extends (props: any, ctx: infer Ctx) => any ? Ctx : any
+>;
+type __VLS_FunctionalComponentProps<T, K> =
+	'__ctx' extends keyof __VLS_PickNotAny<K, {}> ? K extends { __ctx?: { props?: infer P } } ? NonNullable<P> : never
+	: T extends (props: infer P, ...args: any) => any ? P :
+	{};
+type __VLS_AsFunctionOrAny<F> = unknown extends F ? any : ((...args: any) => any) extends F ? F : any;
+
+declare function __VLS_normalizeSlot<S>(s: S): S extends () => infer R ? (props: {}) => R : S;
+
+/**
+ * emit
+ */
+// fix https://github.com/vuejs/language-tools/issues/926
+type __VLS_UnionToIntersection<U> = (U extends unknown ? (arg: U) => unknown : never) extends ((arg: infer P) => unknown) ? P : never;
+type __VLS_OverloadUnionInner<T, U = unknown> = U & T extends (...args: infer A) => infer R
+	? U extends T
+	? never
+	: __VLS_OverloadUnionInner<T, Pick<T, keyof T> & U & ((...args: A) => R)> | ((...args: A) => R)
+	: never;
+type __VLS_OverloadUnion<T> = Exclude<
+	__VLS_OverloadUnionInner<(() => never) & T>,
+	T extends () => never ? never : () => never
+>;
+type __VLS_ConstructorOverloads<T> = __VLS_OverloadUnion<T> extends infer F
+	? F extends (event: infer E, ...args: infer A) => any
+	? { [K in E & string]: (...args: A) => void; }
+	: never
+	: never;
+type __VLS_NormalizeEmits<T> = __VLS_Prettify<
+	__VLS_UnionToIntersection<
+		__VLS_ConstructorOverloads<T> & {
+			[K in keyof T]: T[K] extends any[] ? { (...args: T[K]): void } : never
+		}
+	>
+>;
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ExchangeApp</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "exchangeappdemo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.3",
+    "element-plus": "^2.7.4",
+    "pinia": "^2.1.7",
+    "router": "^1.3.8",
+    "vant": "^4.9.0",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/axios": "^0.14.0",
+    "@types/node": "^20.12.13",
+    "@types/vue-router": "^2.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "@typescript-eslint/parser": "^7.11.0",
+    "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/cli-plugin-typescript": "^5.0.8",
+    "@vue/eslint-config-typescript": "^13.0.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.4.0",
+    "vue-tsc": "^2.0.6"
+  },
+  "main": "index.js",
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "strict": true,
+    "jsx": "preserve",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+}
+</file>
+
+<file path="tsconfig.node.json">
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}
+</file>
+
+<file path="vite.config.ts">
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+import { resolve } from 'path';
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [vue()],
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src')
+    }
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3080',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api/, '/api')
+      }
+    }
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    chunkSizeWarningLimit: 1600
+  }
+});
+</file>
+
+</files>

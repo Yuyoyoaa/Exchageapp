@@ -4,6 +4,7 @@ import { useAuthStore } from './store/auth';
 
 const instance = axios.create({
   baseURL: 'http://localhost:3080/api',
+  timeout: 10000,
 });
 
 // 请求拦截器
@@ -13,6 +14,8 @@ instance.interceptors.request.use(config => {
     config.headers.Authorization = token;
   }
   return config;
+}, error => {
+  return Promise.reject(error);
 });
 
 // 响应拦截器
@@ -35,9 +38,12 @@ instance.interceptors.response.use(
       }
     } else if (error.response?.status >= 500) {
       ElMessage.error('服务器错误，请稍后重试');
+    } else if (error.code === 'ECONNABORTED') {
+      ElMessage.error('请求超时，请检查网络连接');
     }
     return Promise.reject(error);
   }
 );
+
 
 export default instance;

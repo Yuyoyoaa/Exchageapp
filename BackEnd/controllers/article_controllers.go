@@ -24,27 +24,31 @@ const (
 	CacheExpire            = 10 * time.Minute
 )
 
-// ======== 管理员文章操作 ========
+// ======================= 创建文章 =========================
 
 func CreateArticle(ctx *gin.Context) {
-	var article models.Article
-	if err := ctx.ShouldBindJSON(&article); err != nil {
+	var req models.Article
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	article.AuthorID = ctx.GetUint("userID")
 
-	if err := global.Db.Create(&article).Error; err != nil {
+	req.AuthorID = ctx.GetUint("userID")
+
+	if err := global.Db.Create(&req).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	clearArticleCache()
-	ctx.JSON(http.StatusCreated, article)
+	ctx.JSON(http.StatusCreated, req)
 }
+
+// ======================= 更新文章 =========================
 
 func UpdateArticle(ctx *gin.Context) {
 	articleID := ctx.Param("id")
+
 	var req models.Article
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -73,8 +77,11 @@ func UpdateArticle(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "文章已更新", "data": article})
 }
 
+// ======================= 删除文章 =========================
+
 func DeleteArticle(ctx *gin.Context) {
 	articleID := ctx.Param("id")
+
 	if err := global.Db.Delete(&models.Article{}, articleID).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
@@ -84,7 +91,7 @@ func DeleteArticle(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "文章已删除"})
 }
 
-// ======== 文章列表（分页 + 分类 + 缓存） ========
+// ======================= 文章列表（含缓存） =========================
 
 func GetArticles(ctx *gin.Context) {
 	pageStr := ctx.DefaultQuery("page", "1")
@@ -96,8 +103,8 @@ func GetArticles(ctx *gin.Context) {
 
 	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", ArticleListCachePrefix, category, page, limit)
 
-	cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result()
-	if err == nil {
+	// 读取缓存
+	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
 		var articles []models.Article
 		if json.Unmarshal([]byte(cached), &articles) == nil {
 			ctx.JSON(http.StatusOK, articles)
@@ -107,36 +114,53 @@ func GetArticles(ctx *gin.Context) {
 
 	var articles []models.Article
 	db := global.Db
+
 	if category != "" {
 		db = db.Where("category_id = ?", category)
 	}
-	db = db.Offset((page - 1) * limit).Limit(limit).Order("created_at DESC")
-	if err := db.Find(&articles).Error; err != nil {
+
+	if err := db.Order("created_at DESC").
+		Offset((page - 1) * limit).
+		Limit(limit).
+		Find(&articles).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	// 写入缓存
 	data, _ := json.Marshal(articles)
 	global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
 	ctx.JSON(http.StatusOK, articles)
 }
 
-// ======== 单篇文章缓存 + 浏览量 ========
+// ======================= 单篇文章 + 浏览量更新 + 缓存同步 =========================
 
 func GetArticleByID(ctx *gin.Context) {
 	id := ctx.Param("id")
 	cacheKey := ArticleSingleCache + id
 
-	cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result()
-	if err == nil {
+	// 读取缓存
+	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
 		var article models.Article
 		if json.Unmarshal([]byte(cached), &article) == nil {
-			global.Db.Model(&article).UpdateColumn("views_count", gorm.Expr("views_count + ?", 1))
+
+			// 浏览量 +1
+			global.Db.Model(&article).
+				UpdateColumn("views_count", gorm.Expr("views_count + 1"))
+
+			article.ViewsCount += 1 // 同步更新结构体，避免旧数据返回
+
+			// 更新缓存
+			data, _ := json.Marshal(article)
+			global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
 			ctx.JSON(http.StatusOK, article)
 			return
 		}
 	}
 
+	// 数据库读取文章
 	var article models.Article
 	if err := global.Db.First(&article, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -147,18 +171,21 @@ func GetArticleByID(ctx *gin.Context) {
 		return
 	}
 
-	global.Db.Model(&article).UpdateColumn("views_count", gorm.Expr("views_count + ?", 1))
+	// 浏览量 +1
+	global.Db.Model(&article).UpdateColumn("views_count", gorm.Expr("views_count + 1"))
+	article.ViewsCount += 1
 
+	// 更新缓存
 	data, _ := json.Marshal(article)
 	global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
 	ctx.JSON(http.StatusOK, article)
 }
 
-// ======== 热门文章（按 views_count 排序前 10） ========
+// ======================= 热门文章缓存 =========================
 
 func GetHotArticles(ctx *gin.Context) {
-	cached, err := global.RedisDB.Get(ctxRedis, ArticleHotCache).Result()
-	if err == nil {
+	if cached, err := global.RedisDB.Get(ctxRedis, ArticleHotCache).Result(); err == nil {
 		var articles []models.Article
 		if json.Unmarshal([]byte(cached), &articles) == nil {
 			ctx.JSON(http.StatusOK, articles)
@@ -174,36 +201,11 @@ func GetHotArticles(ctx *gin.Context) {
 
 	data, _ := json.Marshal(articles)
 	global.RedisDB.Set(ctxRedis, ArticleHotCache, data, CacheExpire)
+
 	ctx.JSON(http.StatusOK, articles)
 }
 
-// ======== 收藏 ========
-
-func ToggleFavorite(ctx *gin.Context) {
-	userID := ctx.GetUint("userID")
-	articleIDStr := ctx.Param("id")
-	articleID, _ := strconv.Atoi(articleIDStr)
-
-	var fav models.Favorite
-	err := global.Db.Where("user_id = ? AND article_id = ?", userID, articleID).First(&fav).Error
-	if err == nil {
-		// 已收藏，取消
-		global.Db.Delete(&fav)
-		ctx.JSON(http.StatusOK, gin.H{"message": "取消收藏"})
-		return
-	}
-
-	// 创建收藏
-	fav = models.Favorite{UserID: userID, ArticleID: uint(articleID)}
-	if err := global.Db.Create(&fav).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"message": "收藏成功"})
-}
-
-// ======== 辅助函数：缓存清理 ========
+// ======================= 缓存清理 =========================
 
 func clearArticleCache() {
 	keys := global.RedisDB.Keys(ctxRedis, ArticleListCachePrefix+"*").Val()
