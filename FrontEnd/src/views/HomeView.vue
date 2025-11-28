@@ -48,18 +48,18 @@
             <el-row :gutter="20">
               <el-col 
                 v-for="article in hotArticles" 
-                :key="article.ID" 
+                :key="article.id" 
                 :xs="24" 
                 :sm="8" 
                 class="article-col"
               >
-                <el-card class="article-preview-card" shadow="hover" @click="viewArticle(article.ID)">
+                <el-card class="article-preview-card" shadow="hover" @click="viewArticle(article.id)">
                   <div class="article-preview">
-                    <h4>{{ article.Title }}</h4>
-                    <p class="article-excerpt">{{ article.Preview }}</p>
+                    <h4>{{ article.title }}</h4>
+                    <p class="article-excerpt">{{ article.preview }}</p>
                     <div class="article-meta">
-                      <span>👍 {{ article.LikesCount }}</span>
-                      <span>👁 {{ article.ViewsCount }}</span>
+                      <span>👍 {{ article.likesCount }}</span>
+                      <span>👁 {{ article.viewsCount }}</span>
                     </div>
                   </div>
                 </el-card>

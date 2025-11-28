@@ -1,66 +1,91 @@
 <template>
-  <el-container>
+  <el-container class="news-container">
     <el-main>
-      <el-card shadow="never" class="main-card">
+      <el-card shadow="always" class="main-card">
         <!-- 筛选和查询部分 -->
         <div class="filter-section">
-          <!-- 分类筛选：只绑定 model，不再自动触发查询 (@change 事件已移除) -->
-          <el-select 
-            v-model="categoryFilter" 
-            placeholder="选择分类" 
-            style="width: 150px;"
-          >
-            <!-- value="" 表示查询全部 -->
-            <el-option label="全部" value="" />
-            <el-option 
-              v-for="category in categories" 
-              :key="category.id" 
-              :label="category.name" 
-              :value="category.id" 
-            />
-          </el-select>
-          
-          <!-- 【需求 1 实现】查询文章按钮：点击后才触发分类查询 -->
-          <el-button type="primary" @click="searchArticles">查询文章</el-button>
+          <div class="filter-group">
+            <!-- 分类筛选 -->
+            <el-select 
+              v-model="categoryFilter" 
+              placeholder="全部分类"
+              class="category-select"
+              clearable
+              size="large"
+            >
+              <el-option label="全部" value="" />
+              <el-option
+                v-for="category in categories"
+                :key="category.id"
+                :label="category.name"
+                :value="category.id"
+              />
+            </el-select>
 
-          <!-- 【需求 2 实现】热门文章按钮：切换到热门文章列表 -->
-          <el-button type="warning" @click="fetchHotArticles">
-            <el-icon><StarFilled /></el-icon> 热门文章
-          </el-button>
+            <el-button type="primary" size="large" @click="searchArticles" class="filter-btn">
+              <el-icon class="mr-1"><Search /></el-icon> 查询
+            </el-button>
+            <el-button type="warning" size="large" plain @click="fetchHotArticles" class="filter-btn-hot">
+              <el-icon class="mr-1"><StarFilled /></el-icon> 热门文章
+            </el-button>
+          </div>
         </div>
 
         <!-- 文章列表 -->
-        <div v-if="articles.length">
-          <el-card 
-            v-for="article in articles" 
-            :key="article.id" 
-            class="article-card" 
-            shadow="hover"
-          >
-            <div class="article-header">
-              <h2 class="article-title">{{ article.title }}</h2>
-              <span class="article-meta">
-                分类: {{ getCategoryName(article.categoryId) }} | 浏览: {{ article.viewsCount }} | 点赞: {{ article.likesCount }}
-              </span>
-            </div>
-            <p class="article-preview">{{ article.preview }}</p>
-            <div class="article-footer">
-              <el-button type="primary" link @click="viewDetail(article.id)">阅读更多</el-button>
-              <span class="article-time">{{ formatDate(article.createdAt) }}</span>
-            </div>
-          </el-card>
+        <div v-if="articles.length" class="articles-list">
+          <el-row :gutter="24">
+            <el-col
+              v-for="article in articles"
+              :key="article.id"
+              :xs="24" :sm="12" :md="8"
+              class="article-col"
+            >
+              <el-card class="article-card" shadow="hover" :body-style="{ padding: '0' }" @click="viewDetail(article.id)">
+                <!-- 如果有封面图可以在这里展示，目前用纯色块或渐变代替演示，或者直接去掉 -->
+                <div class="article-cover-placeholder" :style="{ backgroundColor: getRandomColor(article.id) }">
+                  <el-tag class="category-tag" effect="dark" size="small">
+                    {{ getCategoryName(article.categoryId) }}
+                  </el-tag>
+                </div>
+                
+                <div class="article-content">
+                  <h3 class="article-title" :title="article.title">
+                    {{ article.title }}
+                  </h3>
+                  
+                  <div class="article-meta-row">
+                    <span class="article-stat">
+                      <el-icon><View /></el-icon> {{ article.viewsCount }}
+                    </span>
+                    <span class="article-stat">
+                      <el-icon><StarFilled /></el-icon> {{ article.likesCount }}
+                    </span>
+                    <span class="article-time">{{ formatDate(article.createdAt) }}</span>
+                  </div>
+
+                  <p class="article-preview">{{ article.preview }}</p>
+                  
+                  <div class="article-footer">
+                    <el-button text type="primary" class="read-btn">
+                      阅读全文 <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+                    </el-button>
+                  </div>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
         </div>
+        
         <div v-else class="no-data">
-          <el-empty description="暂无文章或未找到匹配结果" />
+          <el-empty description="暂无文章或未找到匹配结果" :image-size="120" />
         </div>
 
-        <!-- 分页 (当不是热门文章模式时才显示) -->
-        <!-- isHotMode 为 false 时才显示分页器 -->
+        <!-- 分页器（热门模式下隐藏） -->
         <div class="pagination-container" v-if="articles.length > 0 && !isHotMode">
           <el-pagination
             v-model:current-page="currentPage"
             v-model:page-size="pageSize"
-            :page-sizes="[5, 10, 20]"
+            :page-sizes="[6, 9, 12, 15]"
             :total="total"
             layout="total, sizes, prev, pager, next, jumper"
             @size-change="handleSizeChange"
@@ -74,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { StarFilled } from '@element-plus/icons-vue';
+import { ArrowRight, Search, StarFilled, View } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -99,176 +124,259 @@ interface Category {
 
 const articles = ref<Article[]>([]);
 const categories = ref<Category[]>([]);
-const categoryFilter = ref<number | ''>(''); // 存储选中的分类ID
+const categoryFilter = ref<number | ''>(''); // 选中分类
 const currentPage = ref(1);
-const pageSize = ref(10);
+const pageSize = ref(9); // 调整默认每页数量为3的倍数，适应3列布局
 const total = ref(0);
-const isHotMode = ref(false); // 跟踪是否处于热门文章模式
+const isHotMode = ref(false);
 const router = useRouter();
 
-// 获取所有文章 (分页和筛选逻辑)
 const fetchArticles = async () => {
   try {
     const params: any = { page: currentPage.value, limit: pageSize.value };
-    
-    // 只有当 categoryFilter 是有效的 ID 时才添加 category 参数
-    if (typeof categoryFilter.value === 'number') {
-      params.category = categoryFilter.value;
-    }
-
+    if (typeof categoryFilter.value === 'number') params.category = categoryFilter.value;
     const res = await axios.get<{ data: Article[]; total: number }>('/articles', { params });
-    
-    // 退出热门模式，并更新分页数据
     isHotMode.value = false;
     articles.value = res.data.data;
     total.value = res.data.total;
-
   } catch (error) {
-    console.error('加载文章失败:', error);
     ElMessage.error('加载文章列表失败');
   }
 };
 
-// 【需求 1 实现】查询文章：从第一页开始，根据当前的 categoryFilter 查询
 const searchArticles = () => {
   currentPage.value = 1;
   fetchArticles();
 };
 
-// 【需求 2 实现】获取热门文章 (非分页逻辑)
 const fetchHotArticles = async () => {
   try {
-    // 1. 切换到热门模式
     isHotMode.value = true;
-    
-    // 2. 调用热门文章API
     const res = await axios.get<Article[]>('/articles/hot');
     articles.value = res.data;
-    
-    // 3. 重置筛选条件，并将总数设置为文章列表长度（隐藏分页器）
-    categoryFilter.value = ''; 
-    total.value = articles.value.length; 
-    
+    categoryFilter.value = '';
+    total.value = articles.value.length;
     ElMessage.success(`已加载 ${articles.value.length} 篇热门文章`);
-  } catch (error) {
-    console.error('加载热门文章失败:', error);
+  } catch {
     ElMessage.error('加载热门文章失败');
   }
 };
 
-// 获取分类列表
 const fetchCategories = async () => {
   try {
     const res = await axios.get<Category[]>('/categories');
     categories.value = res.data;
-  } catch (error) {
-    console.error('加载分类失败:', error);
-  }
+  } catch {}
 };
 
-// 分页大小改变：重置到第一页并查询
-const handleSizeChange = (size: number) => { 
-  pageSize.value = size; 
-  currentPage.value = 1; 
-  fetchArticles(); 
+const handleSizeChange = (size: number) => {
+  pageSize.value = size;
+  currentPage.value = 1;
+  fetchArticles();
 };
 
-// 分页页码改变：查询当前页
-const handleCurrentChange = (page: number) => { 
-  currentPage.value = page; 
-  fetchArticles(); 
+const handleCurrentChange = (page: number) => {
+  currentPage.value = page;
+  fetchArticles();
 };
 
-// 根据 ID 获取分类名称
 const getCategoryName = (id: number) => {
   const category = categories.value.find(c => c.id === id);
-  return category ? category.name : '未知分类';
+  return category ? category.name : '资讯';
 };
 
-// 跳转到文章详情页
 const viewDetail = (id: number) => {
   router.push({ name: 'NewsDetail', params: { id: id.toString() } });
 };
 
-// 格式化日期
-const formatDate = (dateStr?: string) => dateStr ? new Date(dateStr).toLocaleDateString('zh-CN', {
-    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+const formatDate = (dateStr?: string) => dateStr
+  ? new Date(dateStr).toLocaleDateString('zh-CN', {
+    month: '2-digit', day: '2-digit' // 简化日期显示
   }) : '';
+
+// 生成随机柔和颜色作为封面占位
+const getRandomColor = (id: number) => {
+  const colors = ['#E8F3FF', '#FFF3E0', '#E8F5E9', '#F3E5F5', '#FFF8E1'];
+  return colors[id % colors.length];
+};
 
 onMounted(() => {
   fetchCategories();
-  fetchArticles(); // 默认加载全部文章
+  fetchArticles();
 });
 </script>
 
 <style scoped>
+.news-container {
+  background-color: #f5f7fa;
+  min-height: calc(100vh - 60px);
+}
+
 .main-card {
   max-width: 1200px;
   margin: 20px auto;
+  border-radius: 16px;
+  border: none;
+  background: transparent;
+  box-shadow: none !important; /* 去掉外层卡片的阴影，让内部卡片浮起来 */
+}
+
+:deep(.el-card__body) {
+  padding: 0;
+}
+
+.filter-section {
+  background: #fff;
+  padding: 20px;
   border-radius: 12px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
-.filter-section { 
-  display: flex; 
-  gap: 10px; 
-  margin-bottom: 20px; 
-  align-items: center; 
-  padding: 10px 0;
-  border-bottom: 1px solid #ebeef5;
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.article-card { 
-  margin-bottom: 20px; 
-  border-radius: 8px;
-  transition: all 0.3s ease;
+
+.category-select {
+  width: 180px;
 }
+
+.mr-1 {
+  margin-right: 4px;
+}
+
+.articles-list {
+  margin-top: 10px;
+}
+
+.article-col {
+  margin-bottom: 24px;
+}
+
+.article-card {
+  border-radius: 12px;
+  border: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  cursor: pointer;
+  background: #fff;
+  overflow: hidden;
+}
+
 .article-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateY(-5px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
 }
-.article-header { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center; 
-  margin-bottom: 10px; 
+
+.article-cover-placeholder {
+  height: 120px; /* 封面高度 */
+  position: relative;
+  /* 如果有真实图片，可以用 background-image 替换 */
 }
+
+.category-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  opacity: 0.9;
+}
+
+.article-content {
+  padding: 20px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 .article-title {
-  font-size: 1.5em;
-  color: #303133;
-  margin: 0;
-}
-.article-meta { 
-  color: #909399; 
-  font-size: 0.85em; 
-  white-space: nowrap;
-}
-.article-preview { 
-  color: #606266; 
-  line-height: 1.7; 
-  margin-bottom: 15px; 
-  text-overflow: ellipsis;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #2c3e50;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+  /* 限制标题两行 */
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3; /* 限制三行预览 */
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  min-height: 60px; /* 保证排版一致 */
+  height: 3.3em; /* 固定高度防止抖动 */
 }
-.article-footer { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center; 
+
+.article-meta-row {
+  display: flex;
+  align-items: center;
+  font-size: 0.85rem;
+  color: #909399;
+  margin-bottom: 12px;
 }
-.article-time { 
-  color: #c0c4cc; 
-  font-size: 0.8em; 
+
+.article-stat {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
 }
-.pagination-container { 
-  display: flex; 
-  justify-content: center; 
-  margin-top: 30px; 
-  padding-bottom: 10px;
+
+.article-stat .el-icon {
+  margin-right: 4px;
 }
-.no-data { 
-  text-align: center; 
-  padding: 40px 0; 
+
+.article-time {
+  margin-left: auto; /* 将时间推到最右边 */
+}
+
+.article-preview {
+  font-size: 0.9rem;
+  color: #606266;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  /* 限制预览文三行 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  flex-grow: 1;
+}
+
+.article-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #f2f6fc;
+}
+
+.read-btn {
+  padding: 0;
+  font-weight: 500;
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 30px;
+  padding-bottom: 20px;
+}
+
+.no-data {
+  text-align: center;
+  padding: 60px 0;
+}
+
+@media (max-width: 768px) {
+  .filter-group {
+    flex-wrap: wrap;
+  }
+  .category-select {
+    width: 100%;
+  }
+  .filter-btn, .filter-btn-hot {
+    flex: 1;
+  }
+  .article-cover-placeholder {
+    height: 100px;
+  }
 }
 </style>
 
