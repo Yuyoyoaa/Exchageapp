@@ -79,7 +79,7 @@
           <div class="comment-list">
             <div v-for="comment in comments" :key="comment.id" class="comment-item">
               <div class="comment-avatar">
-                <el-avatar :size="40">{{ comment.userName?.charAt(0) || 'U' }}</el-avatar>
+                <el-avatar :size="40">{{ comment.user?.avatar?.charAt(0) || comment.userName?.charAt(0) || 'U' }}</el-avatar>
               </div>
 
               <div class="comment-body">
@@ -152,9 +152,16 @@ interface Article {
   createdAt: string;
 }
 
+interface User {
+  id: number;
+  userName: string;
+  avatar?: string;
+}
+
 interface Comment {
   id: number;
   userId: number;
+  user: User;  // 添加 user 对象
   userName: string;
   content: string;
   parentId?: number;

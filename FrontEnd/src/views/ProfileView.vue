@@ -6,71 +6,23 @@
         <!-- ================= 个人资料 ================= -->
         <el-tab-pane label="个人资料">
           <el-form :model="form" label-width="100px" v-loading="loading" class="profile-form">
-
-            <!-- 用户名 -->
-            <el-form-item label="用户名">
-              <el-input v-model="authStore.user!.username" disabled />
-            </el-form-item>
-
-            <!-- 身份 -->
-            <el-form-item label="身份">
-              <el-tag :type="authStore.user!.role === 'admin' ? 'danger' : 'success'">
-                {{ authStore.user!.role === 'admin' ? '管理员' : '普通用户' }}
-              </el-tag>
-            </el-form-item>
-
+            
             <!-- 昵称 -->
             <el-form-item label="昵称">
-              <el-input v-model="form.nickname" />
+              <el-input v-model="form.nickname" placeholder="请输入昵称" />
             </el-form-item>
 
             <!-- 邮箱 -->
             <el-form-item label="邮箱">
-              <el-input v-model="form.email" />
+              <el-input v-model="form.email" placeholder="请输入邮箱" />
             </el-form-item>
 
-            <!-- ================= 头像上传 ================= -->
-            <el-form-item label="头像">
-              <div class="avatar-upload-container">
-                <el-upload
-                  class="avatar-uploader"
-                  action="/user/upload/avatar"
-                  :show-file-list="false"
-                  :before-upload="beforeAvatarUpload"
-                  :on-success="handleAvatarSuccess"
-                  :on-change="handleAvatarChange"
-                  accept="image/*"
-                  :auto-upload="false"
-                  ref="avatarUploader"
-                >
-                  <div class="avatar-wrapper" style="cursor:pointer;">
-                    <img v-if="avatarPreview" :src="avatarPreview" class="avatar" />
-                    <div v-else class="avatar-placeholder">
-                      <i class="el-icon-plus"></i>
-                      <span>选择图片</span>
-                    </div>
-                  </div>
-                </el-upload>
-                
-                <!-- 预览和操作按钮 -->
-                <div v-if="avatarFile" class="preview-section">
-                  <span class="preview-label">新头像预览:</span>
-                  <img :src="avatarPreview" class="preview-image" />
-                  <div class="upload-actions">
-                    <el-button type="primary" size="small" @click="submitAvatarUpload" :loading="uploading">
-                      确认上传
-                    </el-button>
-                    <el-button size="small" @click="cancelAvatarUpload">
-                      取消
-                    </el-button>
-                  </div>
-                </div>
-                
-                <div v-else class="preview-section">
-                  <span class="preview-label">当前头像:</span>
-                  <img :src="form.avatar" class="preview-image" />
-                </div>
-              </div>
+            <!-- 头像 URL -->
+            <el-form-item label="头像 URL">
+              <el-input
+                v-model="form.avatar"
+                placeholder="请输入头像 URL"
+              />
             </el-form-item>
 
             <!-- 修改密码 -->
@@ -139,10 +91,6 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 const loading = ref(false)
-const uploading = ref(false)
-const avatarUploader = ref()
-const avatarFile = ref<File | null>(null)
-const avatarPreview = ref('')
 const favorites = ref<Favorite[]>([])
 
 const form = reactive({
@@ -159,7 +107,6 @@ const initForm = () => {
     form.email = authStore.user.email || ''
     form.avatar = authStore.user.avatar || ''
     form.password = ''
-    avatarPreview.value = authStore.user.avatar || ''
   }
 }
 
@@ -182,83 +129,6 @@ const toggleFavorite = async (articleID: number) => {
     await fetchFavorites()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.error || '操作失败')
-  }
-}
-
-// 上传前检查文件
-const beforeAvatarUpload = (file: File) => {
-  const isImage = file.type.startsWith('image/')
-  const isLt2M = file.size / 1024 / 1024 < 2
-  if (!isImage) ElMessage.error('上传头像只能是图片文件')
-  if (!isLt2M) ElMessage.error('图片大小不能超过 2MB')
-  return isImage && isLt2M
-}
-
-// 处理头像文件选择
-const handleAvatarChange = (file: any) => {
-  // 验证文件
-  if (!beforeAvatarUpload(file.raw)) {
-    return false
-  }
-  
-  avatarFile.value = file.raw
-  // 生成预览
-  avatarPreview.value = URL.createObjectURL(file.raw)
-}
-
-// 提交头像上传
-const submitAvatarUpload = async () => {
-  if (!avatarFile.value) {
-    ElMessage.warning('请先选择头像文件')
-    return
-  }
-  
-  uploading.value = true
-  try {
-    // 手动触发上传
-    if (avatarUploader.value) {
-      // 这里需要手动提交文件
-      const formData = new FormData()
-      formData.append('avatar', avatarFile.value)
-      
-      const res = await axios.post('/user/upload/avatar', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
-      
-      if (res.data.avatar) {
-        form.avatar = res.data.avatar
-        avatarPreview.value = res.data.avatar
-        avatarFile.value = null
-        ElMessage.success('头像上传成功')
-      } else {
-        ElMessage.error('头像上传失败')
-      }
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.error || '头像上传失败')
-  } finally {
-    uploading.value = false
-  }
-}
-
-// 取消头像上传
-const cancelAvatarUpload = () => {
-  avatarFile.value = null
-  avatarPreview.value = form.avatar
-  ElMessage.info('已取消头像上传')
-}
-
-// 上传成功回调
-const handleAvatarSuccess = (res: any) => {
-  // 这个函数现在可能不会被调用，因为我们改为手动上传
-  // 但保留以防其他逻辑需要
-  if (res.avatar) {
-    form.avatar = res.avatar
-    ElMessage.success('头像上传成功')
-  } else {
-    ElMessage.error('头像上传失败')
   }
 }
 
@@ -315,89 +185,6 @@ onMounted(async () => {
 .profile-wrapper { width: 100%; max-width: 800px; }
 .profile-form { max-width: 500px; padding: 20px; }
 
-/* ================= 头像上传样式 ================= */
-.avatar-upload-container {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 15px;
-}
-
-.avatar-uploader {
-  display: inline-block;
-  width: 100px;
-  height: 100px;
-  border: 2px dashed #d9d9d9;
-  border-radius: 50%;
-  cursor: pointer;
-  overflow: hidden;
-  position: relative;
-  transition: all 0.3s;
-}
-
-.avatar-uploader:hover {
-  border-color: #409EFF;
-}
-
-.avatar-wrapper {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: #f5f7fa;
-}
-
-.avatar {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.avatar-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: #c0c4cc;
-}
-
-.avatar-placeholder i {
-  font-size: 24px;
-  margin-bottom: 5px;
-}
-
-.avatar-placeholder span {
-  font-size: 12px;
-}
-
-.preview-section {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 5px;
-}
-
-.preview-label {
-  font-size: 14px;
-  color: #606266;
-}
-
-.preview-image {
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid #e0e0e0;
-}
-
-.upload-actions {
-  display: flex;
-  gap: 8px;
-}
-
 /* ================= 收藏列表样式 ================= */
 .fav-list { display: flex; flex-direction: column; gap: 10px; }
 .fav-item { cursor: pointer; border-radius: 4px; }
@@ -409,6 +196,8 @@ onMounted(async () => {
 .fav-date { font-size: 0.8rem; color: #C0C4CC; }
 .fav-img { width: 120px; height: 80px; border-radius: 4px; overflow: hidden; margin-left: 10px; }
 </style>
+
+
 
 
 

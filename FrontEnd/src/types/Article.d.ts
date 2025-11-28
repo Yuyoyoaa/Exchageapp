@@ -22,6 +22,8 @@ export interface Comment {
   Content: string;
   ParentID?: number;
   CreatedAt?: string;
+
+  user?: User;
 }
 
 export interface Category {

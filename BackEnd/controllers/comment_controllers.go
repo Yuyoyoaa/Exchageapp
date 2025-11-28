@@ -128,9 +128,9 @@ func GetCommentsByArticleID(ctx *gin.Context) {
 		Where("article_id = ?", articleID).
 		Order("created_at ASC").
 		Offset(offset).Limit(limit).
-		/*	Preload("User", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id", "username", "avatar")
-		}). */
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "username", "avatar") // 只加载需要的字段
+		}).
 		Find(&comments).Error
 
 	if err != nil {

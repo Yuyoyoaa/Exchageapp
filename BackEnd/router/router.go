@@ -12,10 +12,6 @@ import (
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 静态文件访问（头像、其他上传文件）
-	// 前端访问路径: /uploads/avatars/xxx
-	r.Static("/uploads", "./uploads")
-
 	// CORS 配置
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
@@ -64,7 +60,6 @@ func SetupRouter() *gin.Engine {
 			user.GET("/profile", controllers.GetProfile)
 			user.PUT("/profile", controllers.UpdateProfile)
 			user.GET("/favorites", controllers.GetUserFavorites)
-			user.POST("/upload/avatar", controllers.UploadAvatar)
 		}
 
 		// ===== 管理员 API =====

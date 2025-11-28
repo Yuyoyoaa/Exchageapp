@@ -17,5 +17,5 @@ type Comment struct {
 	UserName  string `json:"userName"`
 	Content   string `json:"content" binding:"required"`
 	ParentID  *uint  `json:"parentId,omitempty"` // 支持二级回复
-	User      User   `gorm:"foreignKey:UserID" json:"-" binding:"-"`
+	User      User   `gorm:"foreignKey:UserID" json:"user,omitempty" binding:"-"`
 }
