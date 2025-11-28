@@ -3,7 +3,7 @@
     <el-main>
       <div class="welcome-section">
         <div class="welcome-content">
-          <h1 class="title">🚀 欢迎使用蓝鼠兑换系统</h1>
+          <h1 class="title">🚀 欢迎使用YOYO兑换系统</h1>
           <p class="description">一站式货币兑换与金融资讯平台</p>
           
           <div class="feature-cards">

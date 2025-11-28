@@ -1,5 +1,5 @@
-<template>  
-  <el-container style="min-height: calc(100vh - 60px);">  
+<template>
+  <el-container style="min-height: calc(100vh - 60px);">
     <el-main>
       <el-card class="exchange-card">
         <template #header>
@@ -15,7 +15,7 @@
           <el-row :gutter="20">
             <el-col :span="10">
               <el-form-item label="从货币" label-width="80px">
-                <el-select v-model="form.fromCurrency" placeholder="选择货币" style="width: 100%;">
+                <el-select v-model="form.fromCurrency" placeholder="选择货币" style="width: 100%;" @change="calculateResult">
                   <el-option v-for="c in currencies" :key="c" :value="c" :label="c" />
                 </el-select>
               </el-form-item>
@@ -23,7 +23,7 @@
 
             <el-col :span="10">
               <el-form-item label="到货币" label-width="80px">
-                <el-select v-model="form.toCurrency" placeholder="选择货币" style="width: 100%;">
+                <el-select v-model="form.toCurrency" placeholder="选择货币" style="width: 100%;" @change="calculateResult">
                   <el-option v-for="c in currencies" :key="c" :value="c" :label="c" />
                 </el-select>
               </el-form-item>
@@ -37,13 +37,15 @@
           </el-row>
 
           <el-form-item label="金额" label-width="80px">
-            <el-input v-model="form.amount" type="number" @input="calculateResult">
+            <el-input v-model.number="form.amount" type="number" @input="calculateResult">
               <template #prepend>{{ form.fromCurrency }}</template>
             </el-input>
           </el-form-item>
 
           <el-form-item>
-            <el-button type="primary" style="width:100%" @click="exchange">立即兑换</el-button>
+            <el-button type="primary" style="width:100%" @click="exchange">
+              立即兑换
+            </el-button>
           </el-form-item>
         </el-form>
 
@@ -64,7 +66,7 @@
         <!-- 汇率表 -->
         <div class="rates-table" v-if="exchangeRates.length">
           <h3>最新汇率</h3>
-          <el-table :data="exchangeRates">
+          <el-table :data="exchangeRates.slice(0, 20)">
             <el-table-column prop="fromCurrency" label="从货币" width="120" />
             <el-table-column prop="toCurrency" label="到货币" width="120" />
             <el-table-column prop="rate" label="汇率" />
@@ -75,7 +77,6 @@
             </el-table-column>
           </el-table>
         </div>
-
       </el-card>
     </el-main>
   </el-container>
@@ -105,29 +106,45 @@ const currencies = ref<string[]>([]);
 const result = ref<number | null>(null);
 const loading = ref(false);
 
+// 刷新汇率表，从后端获取全部货币对
 const fetchExchangeRates = async () => {
   loading.value = true;
   try {
-    const res = await axios.get('/exchangeRates');
+    const res = await axios.get('/exchangeRates'); // 返回数据库所有汇率
     exchangeRates.value = res.data;
 
-    const cur = new Set<string>();
+    // 生成货币列表（按字母顺序排序）
+    const curSet = new Set<string>();
     exchangeRates.value.forEach(r => {
-      cur.add(r.fromCurrency);
-      cur.add(r.toCurrency);
+      curSet.add(r.fromCurrency);
+      curSet.add(r.toCurrency);
     });
-    currencies.value = [...cur];
-  } catch {
+    currencies.value = [...curSet].sort((a, b) => a.localeCompare(b));
+
+  } catch (err) {
     ElMessage.error("获取汇率失败");
+    console.error(err);
   }
   loading.value = false;
+
+  calculateResult();
 };
 
-const calculateResult = () => {
-  const rate = exchangeRates.value.find(
-    r => r.fromCurrency === form.value.fromCurrency && r.toCurrency === form.value.toCurrency
-  );
-  result.value = rate ? form.value.amount * rate.rate : null;
+// 获取指定货币对的最新汇率
+const fetchLatestRate = async (from: string, to: string): Promise<number | null> => {
+  const rateObj = exchangeRates.value.find(r => r.fromCurrency === from && r.toCurrency === to);
+  if (rateObj) return rateObj.rate;
+  return null;
+};
+
+// 计算兑换结果
+const calculateResult = async () => {
+  const rate = await fetchLatestRate(form.value.fromCurrency, form.value.toCurrency);
+  if (rate !== null) {
+    result.value = form.value.amount * rate;
+  } else {
+    result.value = null;
+  }
 };
 
 const currentRate = computed(() => {
@@ -137,19 +154,53 @@ const currentRate = computed(() => {
   return rate ? rate.rate : 'N/A';
 });
 
+// 交换货币
 const swapCurrencies = () => {
   [form.value.fromCurrency, form.value.toCurrency] =
     [form.value.toCurrency, form.value.fromCurrency];
   calculateResult();
 };
 
-const exchange = () => {
-  ElMessage.success("兑换成功（演示，无后端功能）");
+// 执行兑换（演示）
+const exchange = async () => {
+  const rate = await fetchLatestRate(form.value.fromCurrency, form.value.toCurrency);
+  if (rate !== null) {
+    result.value = form.value.amount * rate;
+    ElMessage.success(`兑换成功: ${form.value.amount} ${form.value.fromCurrency} = ${result.value.toFixed(2)} ${form.value.toCurrency}`);
+  } else {
+    ElMessage.error("兑换失败");
+  }
 };
 
+// 格式化日期
 const formatDate = (d: string) => new Date(d).toLocaleString("zh-CN");
 
+// 页面加载时刷新汇率表
 onMounted(fetchExchangeRates);
 </script>
+
+<style scoped>
+.exchange-card {
+  max-width: 900px;
+  margin: 20px auto;
+}
+.exchange-form {
+  margin-top: 20px;
+}
+.result-panel {
+  margin-top: 20px;
+}
+.rate-info {
+  margin-top: 10px;
+  font-weight: bold;
+}
+.rates-table {
+  margin-top: 30px;
+}
+</style>
+
+
+
+
 
   

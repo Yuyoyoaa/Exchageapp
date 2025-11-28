@@ -10,7 +10,7 @@
         router
       >
         <el-menu-item index="/" style="font-weight: bold; color: #409EFF;">
-          💰 蓝鼠兑换
+          💰 YOYO兑换基地
         </el-menu-item>
         
         <el-menu-item index="/">首页</el-menu-item>
