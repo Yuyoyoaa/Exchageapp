@@ -135,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import axios from '../axios';
@@ -206,16 +206,43 @@ const toggleReply = (id: number) => {
 
 const canDelete = (comment: Comment) => {
   if (!authStore.user) return false;
+  // 检查是否为管理员 (admin) 或评论的创建者 (comment.userId === authStore.user.ID)
   return authStore.user.role === 'admin' || authStore.user.ID === comment.userId;
 };
 
 const deleteComment = async (id: number) => {
+  // 0. 添加防御性检查，防止 ID 缺失导致请求发送到 /comments/undefined
+  if (!id) {
+    console.error('Error: Comment ID is missing or invalid.');
+    return ElMessage.error('评论 ID 缺失，无法执行删除操作。');
+  }
+
+  // 1. 添加确认对话框
   try {
-    await axios.delete(`/comments/${id}`);
-    ElMessage.success('删除成功');
-    fetchComments();
+    // 使用 Element Plus 的 ElMessageBox.confirm 进行用户确认
+    await ElMessageBox.confirm('确定要删除这条评论吗？', '警告', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+    });
   } catch {
-    ElMessage.error('删除失败');
+    // 用户点击取消或关闭对话框
+    ElMessage.info('已取消删除操作');
+    return;
+  }
+  
+  // 2. 执行删除操作
+  try {
+    // 使用传入的有效 id 执行 DELETE 请求
+    await axios.delete(`/comments/${id}`); 
+    ElMessage.success('删除成功');
+    
+    // 3. 重新获取评论列表以刷新 UI
+    fetchComments();
+  } catch (e) {
+    console.error('删除评论失败:', e);
+    // 给出更详细的错误提示，可能是权限不足或网络问题
+    ElMessage.error('删除失败，请检查您的权限或网络连接');
   }
 };
 
@@ -238,13 +265,27 @@ const submitComment = async (parentId: number | null) => {
 const likeArticle = async () => {
   if (!authStore.isAuthenticated) return ElMessage.warning('请登录');
   try {
-    await axios.post(`/articles/${route.params.id}/like`);
-    hasLiked.value = true;
-    if (article.value) article.value.likesCount++;
-    ElMessage.success('点赞成功');
+    // 捕获 API 响应
+    const res = await axios.post(`/articles/${route.params.id}/like`); 
+    const action = res.data.action;
+    const newLikesCount = res.data.likes_count;
+
+    // 根据后端返回的 action 更新前端状态
+    if (action === 'like') {
+      hasLiked.value = true;
+      ElMessage.success('点赞成功');
+    } else if (action === 'unlike') {
+      hasLiked.value = false;
+      ElMessage.success('已取消点赞');
+    }
+
+    // 使用后端返回的最新点赞数更新 UI，避免前端手动增减的错误
+    if (article.value) {
+      article.value.likesCount = newLikesCount;
+    }
   } catch (err: any) {
     console.error(err);
-    ElMessage.error(err.response?.data?.error || '点赞失败');
+    ElMessage.error(err.response?.data?.error || '操作失败'); // 统一为“操作失败”
   }
 };
 
