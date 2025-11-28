@@ -1,10 +1,19 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // 收藏记录
 type Favorite struct {
-	gorm.Model
-	UserID    uint `gorm:"index;not null"`
-	ArticleID uint `gorm:"index;not null"`
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	UserID    uint    `gorm:"index;not null"`
+	ArticleID uint    `gorm:"index;not null"`
+	Article   Article `gorm:"foreignKey:ArticleID;references:ID" json:"Article"`
 }

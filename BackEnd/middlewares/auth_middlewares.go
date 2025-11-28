@@ -20,7 +20,7 @@ func AuthMiddleWare() gin.HandlerFunc {
 			return
 		}
 
-		username, err := utils.ParseJWT(token)
+		username, role, err := utils.ParseJWT(token)
 		if err != nil {
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: " + err.Error()})
 			ctx.Abort()
@@ -38,6 +38,7 @@ func AuthMiddleWare() gin.HandlerFunc {
 		// 设置到 context
 		ctx.Set("userID", user.ID)
 		ctx.Set("username", username)
+		ctx.Set("role", role)
 		ctx.Next()
 	}
 }

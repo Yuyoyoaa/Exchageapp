@@ -15,9 +15,10 @@ func HashPassword(pwd string) (string, error) {
 	return string(hash), err
 }
 
-func GenerateJWT(username string) (string, error) {
+func GenerateJWT(username string, role string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": username,
+		"role":     role, // ← 加上角色
 		"exp":      time.Now().Add(time.Hour * 72).Unix(),
 	})
 
@@ -30,12 +31,11 @@ func CheckPassword(password string, hash string) bool {
 	return err == nil
 }
 
-func ParseJWT(tokenString string) (string, error) {
+func ParseJWT(tokenString string) (string, string, error) {
 	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
 		tokenString = tokenString[7:]
 	}
 
-	// 解析JWT
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected Signing Method")
@@ -44,17 +44,16 @@ func ParseJWT(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		username, ok := claims["username"].(string)
-		if !ok {
-			return "", errors.New("username claim is not a string")
-		}
-		return username, nil
+		username := claims["username"].(string)
+		role := claims["role"].(string)
+		return username, role, nil
 	}
-	return "", err
+
+	return "", "", errors.New("invalid token")
 }
 
 // ValidatePassword 校验密码复杂度

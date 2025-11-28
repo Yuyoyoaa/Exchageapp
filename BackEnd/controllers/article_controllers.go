@@ -8,6 +8,8 @@ import (
 	"exchangeapp/models"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -234,6 +236,49 @@ func GetHotArticles(ctx *gin.Context) {
 	global.RedisDB.Set(ctxRedis, ArticleHotCache, data, CacheExpire)
 
 	ctx.JSON(http.StatusOK, articles)
+}
+
+// 上传文章封面
+func UploadArticleCover(ctx *gin.Context) {
+	articleID, err := strconv.Atoi(ctx.PostForm("articleId"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "文章ID无效"})
+		return
+	}
+
+	file, err := ctx.FormFile("cover")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "封面文件不能为空"})
+		return
+	}
+
+	// 创建目录
+	uploadDir := "./uploads/article/"
+	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "无法创建上传目录"})
+		return
+	}
+
+	// 文件名：articleID_时间戳.ext
+	ext := filepath.Ext(file.Filename)
+	fileName := fmt.Sprintf("%d_%d%s", articleID, time.Now().Unix(), ext)
+	savePath := filepath.Join(uploadDir, fileName)
+
+	if err := ctx.SaveUploadedFile(file, savePath); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	coverURL := fmt.Sprintf("/uploads/article/%s", fileName)
+	if err := global.Db.Model(&models.Article{}).Where("id = ?", articleID).Update("cover", coverURL).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新文章封面失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":  "文章封面上传成功",
+		"coverUrl": coverURL,
+	})
 }
 
 // ======================= 缓存清理 =========================

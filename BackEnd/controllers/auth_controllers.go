@@ -1,10 +1,14 @@
 package controllers
 
 import (
+	"exchangeapp/config"
 	"exchangeapp/global"
 	"exchangeapp/models"
 	"exchangeapp/utils"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,7 +77,7 @@ func Register(ctx *gin.Context) {
 		return
 	}
 
-	token, err := utils.GenerateJWT(user.Username)
+	token, err := utils.GenerateJWT(user.Username, user.Role)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -127,7 +131,7 @@ func Login(ctx *gin.Context) {
 	// 登录成功，删除失败计数
 	global.RedisDB.Del(ctx, key)
 
-	token, err := utils.GenerateJWT(user.Username)
+	token, err := utils.GenerateJWT(user.Username, user.Role)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -207,4 +211,70 @@ func UpdateProfile(ctx *gin.Context) {
 
 	user.Password = ""
 	ctx.JSON(http.StatusOK, user)
+}
+
+// 上传用户头像
+func UploadAvatar(ctx *gin.Context) {
+	// 从上下文中获取当前用户 ID（假设你在中间件里已经设置了 userID）
+	userID := ctx.GetUint("userID")
+	if userID == 0 {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "用户未登录"})
+		return
+	}
+
+	// 获取上传的文件
+	file, err := ctx.FormFile("avatar")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "获取文件失败"})
+		return
+	}
+
+	// 限制文件类型（可选）
+	ext := filepath.Ext(file.Filename)
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".gif" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "不支持的文件格式"})
+		return
+	}
+
+	// 创建保存路径，如果不存在则创建
+	saveDir := "./uploads/avatars"
+	if _, err := os.Stat(saveDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(saveDir, os.ModePerm); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建目录失败"})
+			return
+		}
+	}
+
+	// 文件命名：用户ID + 时间戳 + 后缀，防止重名
+	filename := fmt.Sprintf("%d_%d%s", userID, time.Now().Unix(), ext)
+	savePath := filepath.Join(saveDir, filename)
+
+	// 保存文件到本地
+	if err := ctx.SaveUploadedFile(file, savePath); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	// 更新数据库中的 Avatar 字段
+	var user models.User
+	if err := global.Db.First(&user, userID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 从配置中获取基础URL
+	baseURL := fmt.Sprintf("http://localhost:%s", config.AppConfig.App.Port)
+	avatarURL := baseURL + "/uploads/avatars/" + filename
+
+	user.Avatar = avatarURL
+	if err := global.Db.Save(&user).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新用户头像失败"})
+		return
+	}
+
+	// 返回成功和新头像路径
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "头像上传成功",
+		"avatar":  avatarURL, // 返回完整URL
+	})
 }

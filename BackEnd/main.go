@@ -4,6 +4,7 @@ import (
 	"context"
 	"exchangeapp/config"
 	"exchangeapp/router"
+	"exchangeapp/services"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,9 @@ import (
 
 func main() {
 	config.InitConfig()
+
+	// 启动汇率定时任务（启动时立即获取一次汇率）
+	services.StartExchangeRateScheduler()
 
 	r := router.SetupRouter()
 
