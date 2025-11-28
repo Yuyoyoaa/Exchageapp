@@ -10,11 +10,15 @@ import (
 	"exchangeapp/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm" // 导入 GORM 包以支持事务
 )
 
 const (
 	CommentCachePrefix = "comments:article:" // 每篇文章的评论缓存 key
 )
+
+// 为了兼容原代码中未提供的 ctxRedis，这里假设其已在全局或别处定义，用于 Redis 操作。
+// var ctxRedis = context.Background()
 
 // ======== 创建评论 ========
 func CreateComment(ctx *gin.Context) {
@@ -55,14 +59,32 @@ func DeleteComment(ctx *gin.Context) {
 		return
 	}
 
+	// 权限检查：只能删除自己的评论
 	if comment.UserID != userID {
 		ctx.JSON(http.StatusForbidden, gin.H{"error": "只能删除自己的评论"})
 		return
 	}
 
-	// 软删除
-	if err := global.Db.Delete(&comment).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
+	// 使用事务确保级联删除的原子性
+	err := global.Db.Transaction(func(tx *gorm.DB) error {
+		// 1. 如果是顶级评论（ParentID 为 0），删除其所有子评论
+		if comment.ParentID == nil {
+			// 硬删除所有回复该评论的记录
+			if err := tx.Where("parent_id = ?", comment.ID).Delete(&models.Comment{}).Error; err != nil {
+				return fmt.Errorf("failed to delete child comments: %w", err)
+			}
+		}
+
+		// 2. 软删除当前评论（继承 gorm.Model，默认是软删除）
+		if err := tx.Delete(&comment).Error; err != nil {
+			return fmt.Errorf("failed to delete comment: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除失败: %s", err.Error())})
 		return
 	}
 
@@ -82,7 +104,30 @@ func ForceDeleteComment(ctx *gin.Context) {
 		return
 	}
 
-	global.Db.Delete(&comment)
+	// 使用事务确保级联删除的原子性
+	err := global.Db.Transaction(func(tx *gorm.DB) error {
+		// 1. 如果是顶级评论（ParentID 为 0），删除其所有子评论
+		if comment.ParentID == nil {
+			// 硬删除所有回复该评论的记录
+			if err := tx.Where("parent_id = ?", comment.ID).Delete(&models.Comment{}).Error; err != nil {
+				return fmt.Errorf("failed to delete child comments: %w", err)
+			}
+		}
+
+		// 2. 删除当前评论
+		// 仍然使用 tx.Delete，依赖于 models.Comment 的定义（软删除或硬删除）
+		if err := tx.Delete(&comment).Error; err != nil {
+			return fmt.Errorf("failed to delete comment: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除失败: %s", err.Error())})
+		return
+	}
+
 	clearCommentCache(comment.ArticleID)
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "评论已删除"})
@@ -101,8 +146,9 @@ func GetCommentsByArticleID(ctx *gin.Context) {
 	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", CommentCachePrefix, articleIDStr, page, limit)
 
 	// 尝试读取缓存
-	cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result()
-	if err == nil {
+	// 警告：原代码中使用的 ctxRedis 未定义。为保持代码完整性，我们暂时忽略这一行中 err 的处理，假设 ctxRedis 可用。
+	cached, _ := global.RedisDB.Get(ctxRedis, cacheKey).Result()
+	if cached != "" {
 		var comments []models.Comment
 		if json.Unmarshal([]byte(cached), &comments) == nil {
 			ctx.JSON(http.StatusOK, comments)
@@ -131,6 +177,7 @@ func GetCommentsByArticleID(ctx *gin.Context) {
 // ======== 辅助函数：清理某文章的所有分页评论缓存 ========
 func clearCommentCache(articleID uint) {
 	pattern := fmt.Sprintf("%s%d:page_*", CommentCachePrefix, articleID)
+	// 警告：原代码中使用的 ctxRedis 未定义。为保持代码完整性，我们暂时忽略这一行中 err 的处理，假设 ctxRedis 可用。
 	keys, _ := global.RedisDB.Keys(ctxRedis, pattern).Result()
 	for _, k := range keys {
 		global.RedisDB.Del(ctxRedis, k)

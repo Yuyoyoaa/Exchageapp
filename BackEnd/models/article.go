@@ -1,9 +1,17 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type Article struct {
-	gorm.Model
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
 	Title      string `json:"title" binding:"required"`
 	Content    string `json:"content" binding:"required"`
 	Preview    string `json:"preview" binding:"required"`

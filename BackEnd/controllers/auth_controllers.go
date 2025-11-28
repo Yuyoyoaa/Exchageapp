@@ -155,7 +155,7 @@ func UpdateProfile(ctx *gin.Context) {
 
 	var input struct {
 		Nickname string `json:"nickname"`
-		Email    string `json:"email" binding:"email"`
+		Email    string `json:"email" binding:"omitempty,email"`
 		Avatar   string `json:"avatar"`
 		Password string `json:"password"`
 	}

@@ -24,6 +24,13 @@ const (
 	CacheExpire            = 10 * time.Minute
 )
 
+// ArticleListResponse 定义了文章列表接口的响应结构，包含数据和总数
+// 此结构与前端 Vue 组件中对接口返回值的预期相匹配：{ data: Article[], total: number }
+type ArticleListResponse struct {
+	Data  []models.Article `json:"data"`
+	Total int64            `json:"total"`
+}
+
 // ======================= 创建文章 =========================
 
 func CreateArticle(ctx *gin.Context) {
@@ -101,24 +108,40 @@ func GetArticles(ctx *gin.Context) {
 	page, _ := strconv.Atoi(pageStr)
 	limit, _ := strconv.Atoi(limitStr)
 
-	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", ArticleListCachePrefix, category, page, limit)
+	// 构造缓存键时，将 category 设为 “all” 或具体的 ID
+	categoryCachePart := category
+	if categoryCachePart == "" {
+		categoryCachePart = "all"
+	}
+	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", ArticleListCachePrefix, categoryCachePart, page, limit)
 
-	// 读取缓存
+	// 读取缓存：如果命中，直接返回 ArticleListResponse 结构
 	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
-		var articles []models.Article
-		if json.Unmarshal([]byte(cached), &articles) == nil {
-			ctx.JSON(http.StatusOK, articles)
+		var resp ArticleListResponse
+		if json.Unmarshal([]byte(cached), &resp) == nil {
+			// 缓存命中，直接返回包含 data 和 total 的结构
+			ctx.JSON(http.StatusOK, resp)
 			return
 		}
 	}
 
+	// 数据库查询
 	var articles []models.Article
-	db := global.Db
+	var total int64
+	db := global.Db.Model(&models.Article{}) // 使用 Model() 指定查询的表
 
+	// 应用分类筛选条件 (Go 代码原本就支持分类筛选)
 	if category != "" {
 		db = db.Where("category_id = ?", category)
 	}
 
+	// 1. 获取总数
+	if err := db.Count(&total).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "无法获取文章总数"})
+		return
+	}
+
+	// 2. 获取分页数据
 	if err := db.Order("created_at DESC").
 		Offset((page - 1) * limit).
 		Limit(limit).
@@ -127,11 +150,17 @@ func GetArticles(ctx *gin.Context) {
 		return
 	}
 
+	// 构造与前端预期匹配的响应结构
+	resp := ArticleListResponse{
+		Data:  articles,
+		Total: total,
+	}
+
 	// 写入缓存
-	data, _ := json.Marshal(articles)
+	data, _ := json.Marshal(resp)
 	global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
 
-	ctx.JSON(http.StatusOK, articles)
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // ======================= 单篇文章 + 浏览量更新 + 缓存同步 =========================
@@ -146,12 +175,14 @@ func GetArticleByID(ctx *gin.Context) {
 		if json.Unmarshal([]byte(cached), &article) == nil {
 
 			// 浏览量 +1
+			// 注意：这里只更新数据库，但不会立即更新文章列表缓存，以避免写入风暴。
+			// 列表缓存的更新依赖于过期或 Create/Update/Delete 操作。
 			global.Db.Model(&article).
 				UpdateColumn("views_count", gorm.Expr("views_count + 1"))
 
 			article.ViewsCount += 1 // 同步更新结构体，避免旧数据返回
 
-			// 更新缓存
+			// 更新缓存 (只更新单篇文章缓存)
 			data, _ := json.Marshal(article)
 			global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
 

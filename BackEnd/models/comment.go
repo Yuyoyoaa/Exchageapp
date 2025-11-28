@@ -1,9 +1,17 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type Comment struct {
-	gorm.Model
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
 	ArticleID uint   `json:"articleId" gorm:"index;not null"`
 	UserID    uint   `json:"userId" gorm:"index;not null"`
 	UserName  string `json:"userName"`
