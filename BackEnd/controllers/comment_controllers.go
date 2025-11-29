@@ -23,7 +23,11 @@ const (
 // ======== 创建评论 ========
 func CreateComment(ctx *gin.Context) {
 	userID := ctx.GetUint("userID")
-	userName := ctx.GetString("userName")
+	var user models.User
+	if err := global.Db.First(&user, userID).Error; err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在"})
+		return
+	}
 	articleIDStr := ctx.Param("id")
 	articleID, _ := strconv.Atoi(articleIDStr)
 
@@ -35,7 +39,11 @@ func CreateComment(ctx *gin.Context) {
 
 	comment.ArticleID = uint(articleID)
 	comment.UserID = userID
-	comment.UserName = userName
+	if user.Nickname != "" {
+		comment.UserName = user.Nickname
+	} else {
+		comment.UserName = user.Username
+	}
 
 	if err := global.Db.Create(&comment).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -129,7 +137,8 @@ func GetCommentsByArticleID(ctx *gin.Context) {
 		Order("created_at ASC").
 		Offset(offset).Limit(limit).
 		Preload("User", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id", "username", "avatar") // 只加载需要的字段
+			// 【修改】加载 nickname 和 avatar
+			return db.Select("id", "username", "nickname", "avatar")
 		}).
 		Find(&comments).Error
 

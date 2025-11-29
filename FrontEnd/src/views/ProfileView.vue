@@ -8,17 +8,30 @@
           <div class="profile-content">
             <el-form :model="form" label-width="90px" v-loading="loading" class="profile-form">
               <el-row :gutter="40">
-                <!-- 左侧：头像预览 -->
+                <!-- 左侧：头像预览与上传 -->
                 <el-col :xs="24" :sm="8" class="avatar-col">
                   <div class="avatar-preview-wrapper">
-                    <el-avatar :size="100" :src="form.avatar || authStore.user?.avatar" class="main-avatar">
+                    <!-- 【修改】使用 getImageUrl 处理头像路径 -->
+                    <el-avatar :size="100" :src="getImageUrl(form.avatar || authStore.user?.avatar||'')" class="main-avatar">
                       {{ authStore.user?.username?.charAt(0)?.toUpperCase() || 'U' }}
                     </el-avatar>
+                    
                     <div class="role-badge">
                       <el-tag :type="authStore.user!.role === 'admin' ? 'danger' : 'info'" effect="dark" round>
                         {{ authStore.user!.role === 'admin' ? '管理员' : '普通用户' }}
                       </el-tag>
                     </div>
+
+                    <!-- 【新增】上传按钮 -->
+                    <el-upload
+                      class="avatar-uploader"
+                      action="#"
+                      :show-file-list="false"
+                      :http-request="handleAvatarUpload"
+                      accept="image/jpeg,image/png,image/gif"
+                    >
+                      <el-button type="primary" link size="small" style="margin-top: 10px;">更换头像</el-button>
+                    </el-upload>
                   </div>
                 </el-col>
 
@@ -32,8 +45,9 @@
                     <el-input v-model="form.email" type="email" maxlength="50" placeholder="请输入您的邮箱" />
                   </el-form-item>
 
+                  <!-- 原来的头像URL输入框，可以选择隐藏或者保留让用户手动填 -->
                   <el-form-item label="头像URL">
-                    <el-input v-model="form.avatar" maxlength="255" placeholder="输入图片链接" />
+                    <el-input v-model="form.avatar" maxlength="255" placeholder="输入图片链接或通过左侧上传" />
                   </el-form-item>
 
                   <el-divider content-position="left" style="margin: 30px 0 20px;">安全设置</el-divider>
@@ -65,7 +79,7 @@
                 <div class="fav-inner">
                   <!-- 文章封面 -->
                   <div v-if="fav.Article.cover" class="fav-img-box" @click="router.push(`/news/${fav.Article.id}`)">
-                    <el-image :src="fav.Article.cover" fit="cover" class="fav-img" />
+                    <el-image :src="getImageUrl(fav.Article.cover)" fit="cover" class="fav-img" />
                   </div>
 
                   <!-- 文章信息 -->
@@ -110,7 +124,6 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from '../axios'
 import { useAuthStore } from '../store/auth'
-// 使用全局 Article 类型
 import type { Favorite } from '../types/Article'
 
 const authStore = useAuthStore()
@@ -185,6 +198,30 @@ const formatDate = (dateStr?: string) => {
   return new Date(dateStr).toLocaleDateString('zh-CN')
 }
 
+// 辅助函数：处理图片路径
+const getImageUrl = (path: string) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  return `http://localhost:3080${path}`; // 请根据实际后端端口调整
+};
+
+// 处理头像上传
+const handleAvatarUpload = async (options: any) => {
+  const { file } = options;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await axios.post('/user/upload/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    form.avatar = res.data.url; // 更新表单数据
+    ElMessage.success('头像上传成功，请记得点击保存修改');
+  } catch (error: any) {
+    ElMessage.error('上传失败');
+  }
+};
+
 // 首次加载
 onMounted(async () => {
   if (authStore.isAuthenticated) {
@@ -206,7 +243,7 @@ onMounted(async () => {
   justify-content: center;
   padding: 40px 20px;
   background: #f5f7fa;
-  min-height: calc(100vh - 64px); /* 减去头部高度 */
+  min-height: calc(100vh - 64px);
 }
 
 .profile-wrapper { 
@@ -214,7 +251,6 @@ onMounted(async () => {
   max-width: 900px; 
 }
 
-/* Tabs 样式重写 */
 .profile-tabs {
   border-radius: 8px;
   overflow: hidden;
@@ -241,7 +277,6 @@ onMounted(async () => {
   padding: 20px 10px;
 }
 
-/* 头像区域 */
 .avatar-col {
   display: flex;
   justify-content: center;
@@ -260,13 +295,15 @@ onMounted(async () => {
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 
-/* 按钮样式 */
+.role-badge {
+  margin-top: 5px;
+}
+
 .save-btn {
   width: 100%;
   max-width: 200px;
 }
 
-/* 收藏卡片样式 */
 .fav-list {
   display: flex;
   flex-direction: column;
@@ -316,7 +353,7 @@ onMounted(async () => {
 
 .fav-info {
   flex: 1;
-  min-width: 0; /* 防止 flex 子项溢出 */
+  min-width: 0;
   cursor: pointer;
 }
 
@@ -357,7 +394,6 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-/* 响应式调整 */
 @media (max-width: 768px) {
   .fav-inner {
     flex-direction: column;

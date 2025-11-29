@@ -28,7 +28,7 @@
             </div>
           </div>
 
-          <!-- 【修改】封面图显示，使用 getImageUrl -->
+          <!-- 封面图显示 -->
           <div v-if="article.cover" class="article-cover-wrapper">
             <el-image 
               :src="getImageUrl(article.cover)" 
@@ -55,7 +55,6 @@
                   @click="likeArticle"
                   class="action-btn"
                 >
-                  <!-- 修正：根据状态切换图标，未点赞用空心Star，点赞用实心StarFilled -->
                   <el-icon class="mr-1">
                     <component :is="hasLiked ? 'StarFilled' : 'Star'" />
                   </el-icon>
@@ -72,7 +71,6 @@
                   @click="toggleFavorite"
                   class="action-btn"
                 >
-                  <!-- 修正：使用 CollectionTag 图标代表收藏 -->
                   <el-icon class="mr-1"><CollectionTag /></el-icon>
                   {{ isFavorited ? '已收藏' : '收藏' }}
                 </el-button>
@@ -91,7 +89,8 @@
           <el-card class="comment-input-card" shadow="hover" :body-style="{ padding: '20px' }">
             <div v-if="authStore.isAuthenticated" class="comment-input-area">
               <div class="user-avatar-mini">
-                 <el-avatar :size="40" :src="authStore.user?.avatar">
+                 <!-- 【修复】传入空字符串兜底 -->
+                 <el-avatar :size="40" :src="getImageUrl(authStore.user?.avatar || '')">
                    {{ authStore.user?.username?.charAt(0)?.toUpperCase() }}
                  </el-avatar>
               </div>
@@ -121,15 +120,18 @@
             <transition-group name="list">
               <div v-for="comment in comments" :key="comment.id" class="comment-item">
                 <div class="comment-avatar-col">
-                  <el-avatar :size="48" :src="comment.user?.avatar" class="comment-avatar">
-                    {{ comment.user?.avatar?.charAt(0) || comment.userName?.charAt(0) || 'U' }}
+                  <!-- 【修复】1. 使用 ?? '' 解决 undefined 类型报错 -->
+                  <el-avatar :size="48" :src="getImageUrl(comment.user?.avatar ?? '')" class="comment-avatar">
+                    <!-- 【修复】2. 使用 nickname (小写) 匹配新接口， fallback 逻辑更严谨 -->
+                    {{ (comment.user?.nickname || comment.user?.username || comment.userName || 'U').charAt(0).toUpperCase() }}
                   </el-avatar>
                 </div>
 
                 <div class="comment-content-col">
                   <div class="comment-header-row">
                     <span class="username">
-                      {{ comment.userName || '匿名用户' }}
+                      <!-- 【修复】3. 优先显示 nickname -->
+                      {{ comment.user?.nickname || comment.user?.username || comment.userName || '匿名用户' }}
                       <el-tag v-if="comment.user?.role === 'admin'" size="small" type="danger" effect="plain" round style="transform: scale(0.8);">管理员</el-tag>
                     </span>
                     <span class="timestamp">{{ formatDate(comment.createdAt) }}</span>
@@ -181,7 +183,7 @@
 
 <script setup lang="ts">
 import {
-  Calendar, // 修正了这里
+  Calendar,
   ChatLineRound,
   CollectionTag,
   Delete,
@@ -205,9 +207,11 @@ interface Article {
   createdAt: string;
 }
 
+// 【修复】更新 User 接口以匹配后端 JSON 和代码使用
 interface User {
   id: number;
-  userName: string;
+  username: string; // 修改为小写 username (Go: json:"username")
+  nickname?: string; // 新增 nickname (Go: json:"nickname")
   avatar?: string;
   role?: string;
 }
@@ -216,7 +220,7 @@ interface Comment {
   id: number;
   userId: number;
   user: User;
-  userName: string;
+  userName: string; // 这是 Comment 表里存的冗余字段
   content: string;
   parentId?: number;
   createdAt: string;
@@ -252,9 +256,11 @@ const getImageUrl = (path: string) => {
 const fetchComments = async () => {
   try {
     const res = await axios.get<Comment[]>(`/articles/${route.params.id}/comments`);
+    // 映射处理：如果后端返回的已经是嵌套好的 user 对象，则直接使用
     comments.value = res.data.map(c => ({
       ...c,
-      userName: c.userName || `用户${c.userId}`
+      // 如果后端没有返回 username，这里做个兜底，但主要依赖 c.user 对象
+      userName: c.userName || (c.user ? c.user.username : `用户${c.userId}`)
     }));
   } catch (error) {
     console.error(error);
@@ -269,7 +275,9 @@ const formatDate = (dateStr?: string) => {
 
 const getParentUser = (pid: number) => {
   const parent = comments.value.find(c => c.id === pid);
-  return parent?.userName || 'Unknown';
+  if (!parent) return 'Unknown';
+  // 【修复】使用 nickname, username (小写)
+  return parent.user?.nickname || parent.user?.username || parent.userName || 'Unknown';
 };
 
 const toggleReply = (id: number) => {
@@ -349,7 +357,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 样式部分保持不变，因为没有错误 */
+/* 样式部分保持不变 */
 .news-detail-container { 
   background-color: #f4f5f7; 
   min-height: calc(100vh - 60px); 
@@ -418,12 +426,14 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  text-align: center; /* 图片居中 */
+  background: #fcfcfc;
 }
 
 .cover-image {
   width: 100%;
-  max-height: 400px;
-  object-fit: cover;
+  max-height: 500px; /* 限制最大高度 */
+  object-fit: contain; /* 保持比例 */
 }
 
 .content-divider {
@@ -606,21 +616,6 @@ onMounted(() => {
 
 .fade-in {
   animation: fadeIn 0.3s ease-in-out;
-}
-
-.article-cover-wrapper {
-  margin: 20px 0 30px;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  text-align: center; /* 图片居中 */
-  background: #fcfcfc;
-}
-
-.cover-image {
-  width: 100%;
-  max-height: 500px; /* 限制最大高度 */
-  object-fit: contain; /* 保持比例 */
 }
 
 @keyframes fadeIn {

@@ -4,7 +4,10 @@ import (
 	"exchangeapp/global"
 	"exchangeapp/models"
 	"exchangeapp/utils"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -207,4 +210,40 @@ func UpdateProfile(ctx *gin.Context) {
 
 	user.Password = ""
 	ctx.JSON(http.StatusOK, user)
+}
+
+func UploadAvatar(ctx *gin.Context) {
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "获取上传文件失败"})
+		return
+	}
+
+	// 简单的扩展名检查
+	ext := filepath.Ext(file.Filename)
+	allowExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	if !allowExts[ext] {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "只允许上传 jpg, png, gif 图片"})
+		return
+	}
+
+	// 确保存储目录存在
+	uploadDir := "./uploads/avatars"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建上传目录失败"})
+		return
+	}
+
+	// 生成唯一文件名
+	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+	dst := filepath.Join(uploadDir, filename)
+
+	if err := ctx.SaveUploadedFile(file, dst); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	// 返回相对路径 URL
+	url := "/uploads/avatars/" + filename
+	ctx.JSON(http.StatusOK, gin.H{"url": url})
 }
