@@ -12,6 +12,9 @@ import (
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
+	// 1. 【新增】静态资源映射：让外部可以通过 /uploads/xxx.jpg 访问 ./uploads 目录下的文件
+	r.Static("/uploads", "./uploads")
+
 	// CORS 配置
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},

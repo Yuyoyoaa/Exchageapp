@@ -240,45 +240,42 @@ func GetHotArticles(ctx *gin.Context) {
 
 // 上传文章封面
 func UploadArticleCover(ctx *gin.Context) {
-	articleID, err := strconv.Atoi(ctx.PostForm("articleId"))
+	// 1. 获取上传的文件 (表单 key 为 "file")
+	file, err := ctx.FormFile("file")
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "文章ID无效"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "获取上传文件失败"})
 		return
 	}
 
-	file, err := ctx.FormFile("cover")
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "封面文件不能为空"})
-		return
-	}
-
-	// 创建目录
-	uploadDir := "./uploads/article/"
-	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "无法创建上传目录"})
-		return
-	}
-
-	// 文件名：articleID_时间戳.ext
+	// 2. 检查文件扩展名 (可选，简单的安全性检查)
 	ext := filepath.Ext(file.Filename)
-	fileName := fmt.Sprintf("%d_%d%s", articleID, time.Now().Unix(), ext)
-	savePath := filepath.Join(uploadDir, fileName)
+	allowExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	if !allowExts[ext] {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "只允许上传 jpg, png, gif 图片"})
+		return
+	}
 
-	if err := ctx.SaveUploadedFile(file, savePath); err != nil {
+	// 3. 确保存储目录存在
+	uploadDir := "./uploads/covers"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建上传目录失败"})
+		return
+	}
+
+	// 4. 生成唯一文件名 (使用纳秒时间戳防止重名)
+	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+	dst := filepath.Join(uploadDir, filename)
+
+	// 5. 保存文件
+	if err := ctx.SaveUploadedFile(file, dst); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
 		return
 	}
 
-	coverURL := fmt.Sprintf("/uploads/article/%s", fileName)
-	if err := global.Db.Model(&models.Article{}).Where("id = ?", articleID).Update("cover", coverURL).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新文章封面失败"})
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{
-		"message":  "文章封面上传成功",
-		"coverUrl": coverURL,
-	})
+	// 6. 返回可访问的 URL (相对路径，前端需要拼接 baseURL)
+	// URL 格式: /uploads/covers/123456789.jpg
+	url := "/uploads/covers/" + filename
+	ctx.JSON(http.StatusOK, gin.H{"url": url})
 }
 
 // ======================= 缓存清理 =========================
