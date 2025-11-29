@@ -19,9 +19,6 @@
         <el-input v-model="form.email" placeholder="example@email.com" />
       </el-form-item>
 
-      <el-form-item label="头像 URL">
-        <el-input v-model="form.avatar" placeholder="https://example.com/avatar.png" />
-      </el-form-item>
 
       <el-button type="primary" native-type="submit" style="width: 100%" :loading="loading">注册</el-button>
     </el-form>

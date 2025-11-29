@@ -53,9 +53,10 @@ func SetupRouter() *gin.Engine {
 	{
 		// 普通用户操作（点赞、评论）
 		authAPI.POST("/articles/:id/like", controllers.LikeArticle)        // 每用户只能点赞一次
-		authAPI.POST("/articles/:id/favorite", controllers.ToggleFavorite) // 收藏/取消收藏
+		authAPI.POST("/articles/:id/favorite", controllers.ToggleFavorite) // 收藏/取消收藏(在新闻页面操作)
 		authAPI.POST("/articles/:id/comments", controllers.CreateComment)  // 创建评论
 		authAPI.DELETE("/comments/:id", controllers.DeleteComment)         // 删除自己评论
+		authAPI.DELETE("/favorites/:id", controllers.DeleteFavorite)       // 通过收藏ID删除收藏（在个人收藏区操作）
 
 		// 用户信息
 		user := authAPI.Group("/user")

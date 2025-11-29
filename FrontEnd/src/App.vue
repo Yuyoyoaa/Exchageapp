@@ -1,15 +1,12 @@
 <template>
   <el-container class="layout-container">
-    <!-- 顶部导航栏 -->
     <el-header class="app-header">
       <div class="header-content">
-        <!-- 左侧 LOGO -->
         <div class="logo-area" @click="router.push('/')">
           <span class="logo-icon">💰</span>
           <span class="logo-text">YOYO兑换基地</span>
         </div>
 
-        <!-- 中间 导航菜单 -->
         <el-menu
           :default-active="activeIndex"
           class="nav-menu"
@@ -22,7 +19,6 @@
           <el-menu-item index="/exchange">货币兑换</el-menu-item>
           <el-menu-item index="/news">新闻资讯</el-menu-item>
           
-          <!-- 管理员菜单 -->
           <el-sub-menu index="admin" v-if="authStore.user?.role === 'admin'">
             <template #title>
               <el-icon><Setting /></el-icon>
@@ -33,20 +29,21 @@
           </el-sub-menu>
         </el-menu>
 
-        <!-- 右侧 用户/登录区 -->
         <div class="right-area">
           <template v-if="authStore.isAuthenticated">
             <el-dropdown trigger="click" @command="handleUserCommand">
               <div class="user-info-trigger">
                 <el-avatar 
-                  :size="36" 
-                  :src="authStore.user?.avatar" 
-                  class="user-avatar"
+                  :size="40" 
+                  :src="getImageUrl(authStore.user?.avatar)" 
+                  class="nav-avatar"
                 >
                   {{ authStore.user?.username?.charAt(0)?.toUpperCase() || 'U' }}
                 </el-avatar>
+                
                 <span class="username">{{ authStore.user?.nickname || authStore.user?.username }}</span>
-                <el-tag v-if="authStore.user?.role === 'admin'" size="small" type="danger" effect="plain" round>
+                
+                <el-tag v-if="authStore.user?.role === 'admin'" size="small" type="danger" effect="plain" round style="margin-left: 5px;">
                   ADMIN
                 </el-tag>
                 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -71,7 +68,6 @@
       </div>
     </el-header>
     
-    <!-- 主体内容 -->
     <el-main class="main-content">
       <router-view></router-view>
     </el-main>
@@ -106,7 +102,6 @@ onMounted(() => {
 
 const updateActiveIndex = (currentRoute: any) => {
   if (currentRoute.path.startsWith('/admin')) {
-    // 让 admin 主菜单高亮（或者你可以精确匹配子菜单）
     activeIndex.value = currentRoute.path; 
   } else if (currentRoute.path.startsWith('/news')) {
     activeIndex.value = '/news';
@@ -115,12 +110,10 @@ const updateActiveIndex = (currentRoute: any) => {
   }
 };
 
-// 处理主菜单点击（主要用于路由跳转，router 模式下其实会自动处理，这里主要处理特殊逻辑）
 const handleSelect = (key: string) => {
-  // 这里不需要处理 logout，因为 logout 移到了 dropdown command 中
+  // 菜单选择逻辑
 };
 
-// 处理用户下拉菜单点击
 const handleUserCommand = (command: string) => {
   if (command === 'logout') {
     authStore.logout();
@@ -129,19 +122,34 @@ const handleUserCommand = (command: string) => {
     router.push('/profile');
   }
 };
+
+// 确保这里的逻辑与 ProfileView 中一致，用于处理图片路径
+const getImageUrl = (path?: string) => {
+  if (!path) return '';
+  // 如果已经是完整的 http 开头链接，直接返回
+  if (path.startsWith('http') || path.startsWith('blob:')) return path;
+  
+  // 1. 定义后端基础地址
+  const baseUrl = 'http://localhost:3080';
+  
+  // 2. 智能处理斜杠
+  const validPath = path.startsWith('/') ? path : '/' + path;
+  
+  return `${baseUrl}${validPath}`; 
+};
 </script>
 
 <style scoped>
 .layout-container {
   min-height: 100vh;
-  background-color: #f5f7fa; /* 整体背景色偏灰，突出内容卡片 */
+  background-color: #f5f7fa; 
 }
 
 /* Header 样式 */
 .app-header {
   background: #ffffff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  height: 64px !important; /* 增加一点高度更大气 */
+  height: 64px !important;
   padding: 0;
   position: sticky;
   top: 0;
@@ -181,11 +189,10 @@ const handleUserCommand = (command: string) => {
 /* 导航菜单重置 */
 .nav-menu {
   flex-grow: 1;
-  border-bottom: none !important; /* 去除 Element 默认下划线 */
+  border-bottom: none !important;
   background: transparent;
 }
 
-/* 菜单项样式微调 */
 :deep(.el-menu--horizontal > .el-menu-item) {
   font-size: 15px;
   font-weight: 500;
@@ -227,8 +234,10 @@ const handleUserCommand = (command: string) => {
   background: #f0f2f5;
 }
 
-.user-avatar {
+.nav-avatar {
   border: 1px solid #ebeef5;
+  background-color: #409EFF; /* 头像加载失败时的底色 */
+  color: #fff;
 }
 
 .username {

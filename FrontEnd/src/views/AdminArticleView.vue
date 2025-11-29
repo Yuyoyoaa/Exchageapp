@@ -5,6 +5,7 @@
         <div class="card-header">
           <h2>文章与分类管理</h2>
           <div class="header-actions">
+            <!-- 绑定点击事件打开分类弹窗 -->
             <el-button type="success" @click="categoryDialogVisible = true">管理分类</el-button>
             <el-button type="primary" @click="openCreateDialog">发布文章</el-button>
           </div>
@@ -14,7 +15,6 @@
       <el-table :data="articles" v-loading="loading" stripe style="width: 100%">
         <el-table-column prop="id" label="ID" width="60" />
         
-        <!-- 【新增】封面图显示列 -->
         <el-table-column label="封面" width="100">
           <template #default="scope">
             <el-image 
@@ -62,7 +62,7 @@
       </div>
     </el-card>
 
-    <!-- 编辑/发布弹窗 -->
+    <!-- 文章 编辑/发布 弹窗 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑文章' : '发布文章'" width="700px">
       <el-form :model="form" label-width="80px">
         <el-form-item label="标题" required>
@@ -74,7 +74,6 @@
           </el-select>
         </el-form-item>
         
-        <!-- 【修改】封面上传组件 -->
         <el-form-item label="封面">
           <el-upload
             class="cover-uploader"
@@ -105,20 +104,45 @@
       </template>
     </el-dialog>
 
-    <!-- 分类管理弹窗保持不变 -->
+    <!-- 【功能补充】分类管理弹窗 -->
     <el-dialog v-model="categoryDialogVisible" title="分类管理" width="500px">
-        <!-- ...省略... -->
+      <div class="category-input">
+        <el-input 
+          v-model="newCategoryName" 
+          placeholder="请输入新分类名称" 
+          @keyup.enter="addCategory"
+        />
+        <el-button type="primary" @click="addCategory" :disabled="!newCategoryName.trim()">添加</el-button>
+      </div>
+      
+      <el-table :data="categories" height="300px" style="width: 100%" stripe border>
+        <el-table-column prop="id" label="ID" width="80" align="center" />
+        <el-table-column prop="name" label="分类名称" />
+        <el-table-column label="操作" width="100" align="center">
+          <template #default="scope">
+            <el-popconfirm 
+              title="确定删除该分类吗？"
+              confirm-button-text="删除"
+              cancel-button-text="取消"
+              @confirm="deleteCategory(scope.row.id)"
+            >
+              <template #reference>
+                <el-button type="danger" link size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { Plus } from '@element-plus/icons-vue'; // 引入 Plus 图标
+import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { onMounted, reactive, ref } from 'vue';
 import axios from '../axios';
 
-// 接口定义保持不变...
 interface Article {
   id: number;
   title: string;
@@ -139,12 +163,11 @@ interface Category {
   name: string;
 }
 
-// 状态变量保持不变...
 const articles = ref<Article[]>([]);
 const categories = ref<Category[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
-const categoryDialogVisible = ref(false);
+const categoryDialogVisible = ref(false); // 控制分类弹窗显示
 const isEdit = ref(false);
 const currentId = ref<number | null>(null);
 const currentPage = ref(1);
@@ -161,29 +184,31 @@ const form = reactive({
 
 const newCategoryName = ref('');
 
-// 【新增】拼接图片完整URL
+// 图片 URL 拼接
 const getImageUrl = (path: string) => {
   if (!path) return '';
-  // 如果已经是 http 开头（比如网络图片），直接返回
-  if (path.startsWith('http')) return path;
-  // 否则拼接后端地址，假设后端运行在 localhost:3080
-  return `http://localhost:3080${path}`; 
+  // 如果已经是完整的 http 开头链接，直接返回
+  if (path.startsWith('http') || path.startsWith('blob:')) return path;
+  
+  // 1. 定义后端基础地址 (请确认你的 Go 后端确实运行在 3080 端口，Gin 默认通常是 8080)
+  const baseUrl = 'http://localhost:3080';
+  
+  // 2. 智能处理斜杠：如果 path 不以 / 开头，手动加上 /
+  const validPath = path.startsWith('/') ? path : '/' + path;
+  
+  return `${baseUrl}${validPath}`; 
 };
 
-// 【新增】自定义上传函数
+// 封面上传处理
 const handleUpload = async (options: any) => {
   const { file } = options;
   const formData = new FormData();
   formData.append('file', file);
 
   try {
-    // 调用后端上传接口
     const res = await axios.post('/admin/articles/upload/cover', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+      headers: { 'Content-Type': 'multipart/form-data' }
     });
-    // 后端返回相对路径，如 /uploads/covers/xxx.jpg
     form.cover = res.data.url; 
     ElMessage.success('封面上传成功');
   } catch (error: any) {
@@ -191,9 +216,6 @@ const handleUpload = async (options: any) => {
     ElMessage.error(error.response?.data?.error || '上传失败');
   }
 };
-
-// 现有的 fetchArticles, fetchCategories, getCategoryName, handleEdit, handleDelete 等函数保持不变...
-// 只需要确保 handleEdit 时，form.cover 被正确赋值即可，原代码已包含：form.cover = row.cover;
 
 const fetchArticles = async () => {
   loading.value = true;
@@ -312,6 +334,33 @@ const handleDelete = async (row: Article) => {
   }
 };
 
+// 【功能补充】添加分类
+const addCategory = async () => {
+  if (!newCategoryName.value.trim()) {
+    ElMessage.warning('请输入分类名称');
+    return;
+  }
+  try {
+    await axios.post('/admin/categories', { name: newCategoryName.value.trim() });
+    ElMessage.success('分类添加成功');
+    newCategoryName.value = ''; // 清空输入框
+    await fetchCategories(); // 刷新列表
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '分类添加失败');
+  }
+};
+
+// 【功能补充】删除分类
+const deleteCategory = async (id: number) => {
+  try {
+    await axios.delete(`/admin/categories/${id}`);
+    ElMessage.success('分类已删除');
+    await fetchCategories(); // 刷新列表
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '删除失败，可能包含关联文章');
+  }
+};
+
 const handleSizeChange = (size: number) => {
   pageSize.value = size;
   currentPage.value = 1;
@@ -357,6 +406,7 @@ onMounted(() => {
   margin-top: 20px; 
   text-align: right; 
 }
+/* 分类管理弹窗样式 */
 .category-input { 
   display: flex; 
   gap: 10px; 

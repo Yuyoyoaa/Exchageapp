@@ -153,8 +153,16 @@ const hotArticles = ref<Article[]>([]);
 // 【新增】拼接图片完整URL (假设后端在 localhost:8080)
 const getImageUrl = (path: string) => {
   if (!path) return '';
-  if (path.startsWith('http')) return path;
-  return `http://localhost:3080${path}`; 
+  // 如果已经是完整的 http 开头链接，直接返回
+  if (path.startsWith('http') || path.startsWith('blob:')) return path;
+  
+  // 1. 定义后端基础地址 (请确认你的 Go 后端确实运行在 3080 端口，Gin 默认通常是 8080)
+  const baseUrl = 'http://localhost:3080';
+  
+  // 2. 智能处理斜杠：如果 path 不以 / 开头，手动加上 /
+  const validPath = path.startsWith('/') ? path : '/' + path;
+  
+  return `${baseUrl}${validPath}`; 
 };
 
 const fetchHotArticles = async () => {
