@@ -40,12 +40,36 @@
               :xs="24" :sm="12" :md="8"
               class="article-col"
             >
-              <el-card class="article-card" shadow="hover" :body-style="{ padding: '0' }" @click="viewDetail(article.id)">
-                <!-- 如果有封面图可以在这里展示，目前用纯色块或渐变代替演示，或者直接去掉 -->
-                <div class="article-cover-placeholder" :style="{ backgroundColor: getRandomColor(article.id) }">
-                  <el-tag class="category-tag" effect="dark" size="small">
-                    {{ getCategoryName(article.categoryId) }}
-                  </el-tag>
+             <el-card class="article-card" shadow="hover" :body-style="{ padding: '0' }" @click="viewDetail(article.id)">
+                
+                <!-- 【修改】封面图逻辑：优先显示真实图片 -->
+                <div class="article-cover-area">
+                  <el-image 
+                    v-if="article.cover" 
+                    :src="getImageUrl(article.cover)" 
+                    fit="cover" 
+                    class="article-real-cover"
+                    lazy
+                  >
+                     <template #error>
+                        <div class="image-slot">
+                           <el-icon><Picture /></el-icon>
+                        </div>
+                      </template>
+                  </el-image>
+
+                  <!-- 没有封面时显示色块 -->
+                  <div 
+                    v-else 
+                    class="article-cover-placeholder" 
+                    :style="{ backgroundColor: getRandomColor(article.id) }"
+                  >
+                  </div>
+
+                   <!-- 标签浮动在图片上方 -->
+                   <el-tag class="category-tag" effect="dark" size="small">
+                      {{ getCategoryName(article.categoryId) }}
+                   </el-tag>
                 </div>
                 
                 <div class="article-content">
@@ -99,7 +123,8 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowRight, Search, StarFilled, View } from '@element-plus/icons-vue';
+
+import { ArrowRight, Picture, Search, StarFilled, View } from '@element-plus/icons-vue'; // 引入图标
 import { ElMessage } from 'element-plus';
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -198,6 +223,12 @@ const formatDate = (dateStr?: string) => dateStr
 const getRandomColor = (id: number) => {
   const colors = ['#E8F3FF', '#FFF3E0', '#E8F5E9', '#F3E5F5', '#FFF8E1'];
   return colors[id % colors.length];
+};
+
+const getImageUrl = (path: string) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  return `http://localhost:3080${path}`; 
 };
 
 onMounted(() => {
@@ -362,6 +393,42 @@ onMounted(() => {
 .no-data {
   text-align: center;
   padding: 60px 0;
+}
+
+.article-cover-area {
+  height: 160px;
+  width: 100%;
+  position: relative;
+  background: #f5f7fa;
+}
+
+.article-real-cover {
+  width: 100%;
+  height: 100%;
+}
+
+.article-cover-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.category-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  opacity: 0.9;
+  z-index: 2; /* 确保在图片上方 */
+}
+
+.image-slot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  background: #f5f7fa;
+  color: #909399;
+  font-size: 24px;
 }
 
 @media (max-width: 768px) {

@@ -98,7 +98,7 @@
         <!-- 右侧：行情表（在大屏时分栏显示） -->
         <div class="rates-panel">
           <div class="panel-title">
-            <el-icon><TrendCharts /></el-icon> 热门汇率行情
+            <el-icon><TrendCharts /></el-icon> 相关汇率行情
           </div>
           <el-table 
             :data="exchangeRates.slice(0, 8)" 

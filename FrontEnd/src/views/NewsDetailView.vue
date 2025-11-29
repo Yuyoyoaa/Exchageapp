@@ -28,8 +28,15 @@
             </div>
           </div>
 
+          <!-- 【修改】封面图显示，使用 getImageUrl -->
           <div v-if="article.cover" class="article-cover-wrapper">
-            <el-image :src="article.cover" fit="cover" class="cover-image" lazy />
+            <el-image 
+              :src="getImageUrl(article.cover)" 
+              fit="contain" 
+              class="cover-image" 
+              :preview-src-list="[getImageUrl(article.cover)]"
+              preview-teleported
+            />
           </div>
 
           <el-divider class="content-divider" />
@@ -234,6 +241,12 @@ const fetchArticle = async () => {
   } catch (error) {
     console.error(error);
   }
+};
+
+const getImageUrl = (path: string) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  return `http://localhost:3080${path}`; 
 };
 
 const fetchComments = async () => {
@@ -593,6 +606,21 @@ onMounted(() => {
 
 .fade-in {
   animation: fadeIn 0.3s ease-in-out;
+}
+
+.article-cover-wrapper {
+  margin: 20px 0 30px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  text-align: center; /* 图片居中 */
+  background: #fcfcfc;
+}
+
+.cover-image {
+  width: 100%;
+  max-height: 500px; /* 限制最大高度 */
+  object-fit: contain; /* 保持比例 */
 }
 
 @keyframes fadeIn {
