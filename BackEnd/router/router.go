@@ -3,6 +3,8 @@ package router
 import (
 	"exchangeapp/controllers"
 	"exchangeapp/middlewares"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -12,8 +14,15 @@ import (
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 1. 【新增】静态资源映射：让外部可以通过 /uploads/xxx.jpg 访问 ./uploads 目录下的文件
-	r.Static("/uploads", "./uploads")
+	// 从环境读取上传目录，默认 ./uploads
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		uploadDir = "./uploads"
+	}
+	// 转为绝对路径，便于调试
+	absUploadDir, _ := filepath.Abs(uploadDir)
+	// 静态资源映射
+	r.Static("/uploads", absUploadDir)
 
 	// CORS 配置
 	r.Use(cors.New(cors.Config{

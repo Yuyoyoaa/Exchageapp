@@ -36,7 +36,9 @@ services:
     build:
       context: ./BackEnd
       dockerfile: Dockerfile
-    container_name: exchange-backend
+    container_name: exchange-backend    
+    volumes:
+      - ./uploads:/app/uploads   # 将主机项目 uploads 目录挂载到容器
     ports:
       - "3080:3080"  # 这里已经正确映射了
     depends_on:
@@ -53,6 +55,7 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=
       - REDIS_DB=0
+      - UPLOAD_DIR=/app/uploads
     restart: unless-stopped
 
 volumes:
