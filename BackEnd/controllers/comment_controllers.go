@@ -2,142 +2,159 @@ package controllers
 
 import (
 	"encoding/json"
+	"exchangeapp/global"
+	"exchangeapp/models"
 	"fmt"
 	"net/http"
 	"strconv"
-
-	"exchangeapp/global"
-	"exchangeapp/models"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm" // 导入 GORM 包以支持事务
+	"gorm.io/gorm"
 )
 
 const (
-	CommentCachePrefix = "comments:article:" // 每篇文章的评论缓存 key
+	CommentCachePrefix = "comments:article:" // 格式：comments:article:{articleID}:page_{p}:limit_{l}
+	CommentCacheTTL    = 10 * time.Minute
 )
 
-// 为了兼容原代码中未提供的 ctxRedis，这里假设其已在全局或别处定义，用于 Redis 操作。
-// var ctxRedis = context.Background()
-
-// ======== 创建评论 ========
+// ======================= 创建评论 =========================
 func CreateComment(ctx *gin.Context) {
+	// 1. 获取当前用户
 	userID := ctx.GetUint("userID")
+
+	// 优化：只查询必要的用户信息字段
 	var user models.User
-	if err := global.Db.First(&user, userID).Error; err != nil {
+	if err := global.Db.Select("id, nickname, username, avatar").First(&user, userID).Error; err != nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在"})
 		return
 	}
-	articleIDStr := ctx.Param("id")
-	articleID, _ := strconv.Atoi(articleIDStr)
 
-	var comment models.Comment
-	if err := ctx.ShouldBindJSON(&comment); err != nil {
+	// 2. 解析文章ID
+	articleIDStr := ctx.Param("id")
+	articleID, err := strconv.Atoi(articleIDStr)
+	if err != nil || articleID <= 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的文章ID"})
+		return
+	}
+
+	// 3. 绑定请求数据
+	var req models.Comment
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	comment.ArticleID = uint(articleID)
-	comment.UserID = userID
-	if user.Nickname != "" {
-		comment.UserName = user.Nickname
-	} else {
+	// 4. 组装数据
+	comment := models.Comment{
+		ArticleID: uint(articleID),
+		UserID:    userID,
+		Content:   req.Content,
+		ParentID:  req.ParentID,
+		UserName:  user.Nickname,
+	}
+	if comment.UserName == "" {
 		comment.UserName = user.Username
 	}
 
+	// 5. 写入数据库
 	if err := global.Db.Create(&comment).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "评论发布失败"})
 		return
 	}
 
-	// 新增评论后清理文章所有分页缓存
-	clearCommentCache(uint(articleID))
+	// 6. 异步清理缓存
+	go clearCommentCache(uint(articleID))
 
 	ctx.JSON(http.StatusCreated, comment)
 }
 
-// ======== 删除评论（用户只能删自己的；管理员可删任何） ========
+// ======================= 删除评论 =========================
 func DeleteComment(ctx *gin.Context) {
 	userID := ctx.GetUint("userID")
 	role := ctx.GetString("role") // "admin" or "user"
 	commentID := ctx.Param("id")
 
+	// 1. 先查出评论，确认归属权
 	var comment models.Comment
 	if err := global.Db.First(&comment, commentID).Error; err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "评论不存在"})
 		return
 	}
 
-	// 权限控制
+	// 2. 权限校验
 	if role != "admin" && comment.UserID != userID {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "只能删除自己的评论"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权删除此评论"})
 		return
 	}
 
-	// 事务，保证级联删除
+	// 3. 事务删除 (级联删除子评论)
 	err := global.Db.Transaction(func(tx *gorm.DB) error {
-
-		// 顶级评论 => 删除所有子评论
 		if comment.ParentID == nil {
-			if err := tx.Where("parent_id = ?", comment.ID).
-				Delete(&models.Comment{}).Error; err != nil {
-				return fmt.Errorf("failed to delete child comments: %w", err)
+			// 如果是父评论，先删除所有子评论
+			if err := tx.Where("parent_id = ?", comment.ID).Delete(&models.Comment{}).Error; err != nil {
+				return err
 			}
 		}
-
-		// 删除当前评论
+		// 删除评论本身
 		if err := tx.Delete(&comment).Error; err != nil {
-			return fmt.Errorf("failed to delete comment: %w", err)
+			return err
 		}
-
 		return nil
 	})
 
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("删除失败: %s", err.Error()),
-		})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
 	}
 
-	// 清除该文章的缓存
-	clearCommentCache(comment.ArticleID)
+	// 4. 异步清理缓存
+	go clearCommentCache(comment.ArticleID)
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "评论已删除"})
 }
 
-// ======== 获取文章评论（支持分页 + Redis 缓存 + Preload 用户头像） ========
+// ======================= 获取评论列表 (已恢复为返回数组) =========================
 func GetCommentsByArticleID(ctx *gin.Context) {
 	articleID := ctx.Param("id")
-	pageStr := ctx.DefaultQuery("page", "1")
-	limitStr := ctx.DefaultQuery("limit", "10")
 
-	page, _ := strconv.Atoi(pageStr)
-	limit, _ := strconv.Atoi(limitStr)
-	offset := (page - 1) * limit
+	// 1. 分页参数处理
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
 
-	// Redis 缓存 key
-	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d",
-		CommentCachePrefix, articleID, page, limit)
+	// 构造缓存 Key
+	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", CommentCachePrefix, articleID, page, limit)
 
-	// ---------- 读取缓存 ----------
-	cached, err := global.RedisDB.Get(ctx, cacheKey).Result()
-	if err == nil && cached != "" {
-		var cachedComments []models.Comment
-		if json.Unmarshal([]byte(cached), &cachedComments) == nil {
-			ctx.JSON(http.StatusOK, cachedComments)
+	// 2. 尝试读取缓存
+	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
+		var comments []models.Comment
+		// 直接反序列化为数组，保持和前端的兼容性
+		if json.Unmarshal([]byte(cached), &comments) == nil {
+			ctx.JSON(http.StatusOK, comments)
 			return
 		}
 	}
 
-	// ---------- 查询数据库 ----------
+	// 3. 数据库查询
 	var comments []models.Comment
-	err = global.Db.
-		Where("article_id = ?", articleID).
-		Order("created_at ASC").
-		Offset(offset).Limit(limit).
+
+	db := global.Db.Model(&models.Comment{}).Where("article_id = ?", articleID)
+
+	// 注意：为了兼容前端，这里不再返回 Total 字段，但查询逻辑依然保持高效
+	err := db.Order("created_at ASC").
+		Offset((page-1)*limit).
+		Limit(limit).
 		Preload("User", func(db *gorm.DB) *gorm.DB {
-			// 【修改】加载 nickname 和 avatar
+			// 仅加载必要的字段，保护用户隐私
 			return db.Select("id", "username", "nickname", "avatar")
 		}).
 		Find(&comments).Error
@@ -147,20 +164,38 @@ func GetCommentsByArticleID(ctx *gin.Context) {
 		return
 	}
 
-	// ---------- 写入缓存 ----------
-	bytes, _ := json.Marshal(comments)
-	global.RedisDB.Set(ctx, cacheKey, bytes, CacheExpire)
+	// 4. 异步写入缓存
+	go func() {
+		data, _ := json.Marshal(comments) // 缓存的也是纯数组
+		global.RedisDB.Set(ctxRedis, cacheKey, data, CommentCacheTTL)
+	}()
 
-	// ---------- 输出 ----------
+	// 直接返回数组，这样您的前端 v-for 就能正常工作了
 	ctx.JSON(http.StatusOK, comments)
 }
 
-// ======== 辅助函数：清理某文章的所有分页评论缓存 ========
+// ======================= 缓存清理工具 =========================
+
+// clearCommentCache 使用 SCAN 替代 KEYS，防止阻塞
 func clearCommentCache(articleID uint) {
-	pattern := fmt.Sprintf("%s%d:page_*", CommentCachePrefix, articleID)
-	// 警告：原代码中使用的 ctxRedis 未定义。为保持代码完整性，我们暂时忽略这一行中 err 的处理，假设 ctxRedis 可用。
-	keys, _ := global.RedisDB.Keys(ctxRedis, pattern).Result()
-	for _, k := range keys {
-		global.RedisDB.Del(ctxRedis, k)
+	pattern := fmt.Sprintf("%s%d:*", CommentCachePrefix, articleID)
+	var cursor uint64
+	var keys []string
+	var err error
+
+	// 循环扫描，每次处理 100 个 Key
+	for {
+		keys, cursor, err = global.RedisDB.Scan(ctxRedis, cursor, pattern, 100).Result()
+		if err != nil {
+			return
+		}
+
+		if len(keys) > 0 {
+			global.RedisDB.Del(ctxRedis, keys...)
+		}
+
+		if cursor == 0 {
+			break
+		}
 	}
 }

@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"exchangeapp/global"
 	"exchangeapp/models"
 	"fmt"
@@ -11,219 +11,207 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
-	// Redis key 前缀：用于存储文章点赞集合
-	ArticleLikeSetPrefix = "article:likes:" // 存储 user_id 集合，key 为 article:likes:{articleID}
-	// Redis key 前缀：用于存储点赞数计数
-	ArticleLikeCountPrefix = "article:likes:count:" // 存储点赞数，key 为 article:likes:count:{articleID}
-	// 缓存过期时间
-	LikesCacheExpire = 24 * time.Hour
+	// Redis key 前缀
+	ArticleLikeSetPrefix   = "article:likes:"       // Set: 存储 user_id
+	ArticleLikeCountPrefix = "article:likes:count:" // String: 存储点赞数
+	LikesCacheExpire       = 24 * time.Hour
 )
 
 var ctxLike = context.Background()
 
 // ===================== 点赞文章 =====================
 // LikeArticle 点赞或取消点赞文章
-// 第一次点赞：将用户ID加入Redis集合，点赞数+1
-// 第二次点赞（取消）：将用户ID从Redis集合移除，点赞数-1
 func LikeArticle(ctx *gin.Context) {
+	// 1. 解析参数
 	userID := ctx.GetUint("userID")
 	articleIDStr := ctx.Param("id")
-
-	// 参数校验
 	if articleIDStr == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "article id is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Article ID is required"})
 		return
 	}
-
 	articleID, err := strconv.ParseUint(articleIDStr, 10, 32)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid article id"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Article ID"})
 		return
 	}
+	uid := uint(articleID)
 
-	// 检查文章是否存在
-	var article models.Article
-	if err := global.Db.First(&article, articleID).Error; err != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-		return
-	}
-
-	// Redis keys
-	likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
-	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
+	// Redis Keys
+	likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, uid)
+	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, uid)
 	userIDStr := strconv.FormatUint(uint64(userID), 10)
 
-	// 检查用户是否已经点赞过该文章
-	isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
+	// 2. 检查点赞状态 (优先查 Redis，减少 DB 压力)
+	// 注意：如果 Redis 里的数据因过期丢失，这里可能会误判为未点赞。
+	// 为严谨起见，如果 Redis 查不到，应该去 DB 查一次。
+	_, err = global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check like status"})
+		// Redis 出错时降级或报错，这里选择报错
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "System error: cache check failed"})
 		return
 	}
 
-	var message string
+	// 3. 执行逻辑
 	var action string
+	var finalCount int64
 
-	if isMember {
-		// 用户已点赞，现在取消点赞
-		// 从 Redis Set 中删除用户ID
-		if err := global.RedisDB.SRem(ctxLike, likeSetKey, userIDStr).Err(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlike article"})
-			return
+	// 开启 DB 事务，确保数据一致性
+	err = global.Db.Transaction(func(tx *gorm.DB) error {
+		// 检查文章是否存在 (加锁读取防止并发删除，可选)
+		// 只要 ID 存在即可，不需要查出所有字段
+		var exists int64
+		if err := tx.Model(&models.Article{}).Where("id = ?", uid).Count(&exists).Error; err != nil {
+			return err
+		}
+		if exists == 0 {
+			return errors.New("article not found")
 		}
 
-		// 点赞数 -1（如果存在的话）
-		global.RedisDB.Decr(ctxLike, likeCountKey)
+		// 这里再次确认 DB 中的点赞状态，防止 Redis 数据不一致
+		var likeRecord models.ArticleLike
+		result := tx.Where("user_id = ? AND article_id = ?", userID, uid).First(&likeRecord)
+		isLikedInDB := result.Error == nil
 
-		// 更新数据库：点赞数 -1
-		global.Db.Model(&article).Update("likes_count", article.LikesCount-1)
+		if isLikedInDB {
+			// === 取消点赞 ===
+			action = "unlike"
 
-		// 同步删除点赞记录（可选，用于数据持久化）
-		global.Db.Where("user_id = ? AND article_id = ?", userID, articleID).
-			Delete(&models.ArticleLike{})
+			// 1. 删除 DB 记录
+			if err := tx.Where("user_id = ? AND article_id = ?", userID, uid).Delete(&models.ArticleLike{}).Error; err != nil {
+				return err
+			}
 
-		message = "article unliked successfully"
-		action = "unlike"
-	} else {
-		// 用户未点赞，现在点赞
-		// 添加用户ID到 Redis Set
-		if err := global.RedisDB.SAdd(ctxLike, likeSetKey, userIDStr).Err(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to like article"})
-			return
-		}
+			// 2. 原子减少 DB 点赞数
+			if err := tx.Model(&models.Article{}).Where("id = ?", uid).
+				UpdateColumn("likes_count", gorm.Expr("likes_count - 1")).Error; err != nil {
+				return err
+			}
 
-		// 设置 Redis key 过期时间（可选）
-		global.RedisDB.Expire(ctxLike, likeSetKey, LikesCacheExpire)
-
-		// 点赞数 +1
-		global.RedisDB.Incr(ctxLike, likeCountKey)
-		global.RedisDB.Expire(ctxLike, likeCountKey, LikesCacheExpire)
-
-		// 更新数据库：点赞数 +1
-		global.Db.Model(&article).Update("likes_count", article.LikesCount+1)
-
-		// 同步添加点赞记录到数据库（用于数据持久化）
-		articleLike := models.ArticleLike{
-			UserID:    userID,
-			ArticleID: uint(articleID),
-		}
-		if err := global.Db.Create(&articleLike).Error; err != nil {
-			// 如果数据库操作失败，从 Redis 回滚
+			// 3. 更新 Redis (事务提交前执行，或者 defer 执行)
+			// 为了简单，这里直接执行，如果事务失败 Redis 会有短暂不一致，但可以通过 TTL 自动修复
 			global.RedisDB.SRem(ctxLike, likeSetKey, userIDStr)
-			global.RedisDB.Decr(ctxLike, likeCountKey)
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save like record"})
-			return
+			finalCount = global.RedisDB.Decr(ctxLike, likeCountKey).Val()
+
+		} else {
+			// === 点赞 ===
+			action = "like"
+
+			// 1. 创建 DB 记录
+			newLike := models.ArticleLike{UserID: userID, ArticleID: uid}
+			if err := tx.Create(&newLike).Error; err != nil {
+				return err
+			}
+
+			// 2. 原子增加 DB 点赞数
+			if err := tx.Model(&models.Article{}).Where("id = ?", uid).
+				UpdateColumn("likes_count", gorm.Expr("likes_count + 1")).Error; err != nil {
+				return err
+			}
+
+			// 3. 更新 Redis
+			global.RedisDB.SAdd(ctxLike, likeSetKey, userIDStr)
+			// 刷新 Set 过期时间，保证热点数据常驻
+			global.RedisDB.Expire(ctxLike, likeSetKey, LikesCacheExpire)
+
+			finalCount = global.RedisDB.Incr(ctxLike, likeCountKey).Val()
+			global.RedisDB.Expire(ctxLike, likeCountKey, LikesCacheExpire)
 		}
 
-		message = "article liked successfully"
-		action = "like"
+		return nil
+	})
+
+	if err != nil {
+		if err.Error() == "article not found" {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update like status"})
+		}
+		return
 	}
 
-	// 同步文章缓存（立即更新单篇文章和列表缓存）
-	syncArticleCacheAfterLike(uint(articleID))
-
-	// 获取当前点赞数
-	likesCount, _ := global.RedisDB.Get(ctxLike, likeCountKey).Int64()
+	// 4. 返回结果
+	// 注意：这里不再暴力清理所有列表缓存。
+	// 前端列表页的点赞数可以容忍短暂不一致，或者前端手动 +1/-1。
+	// 只有文章详情缓存建议清理。
+	go func() {
+		// 仅清除单篇文章缓存，让下次请求重新加载最新数据
+		global.RedisDB.Del(ctxLike, fmt.Sprintf("articles:single:%d", uid))
+	}()
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message":     message,
+		"message":     fmt.Sprintf("Article %sd successfully", action),
 		"action":      action,
-		"article_id":  articleID,
+		"article_id":  uid,
 		"user_id":     userID,
-		"likes_count": likesCount,
+		"likes_count": finalCount,
 	})
 }
 
 // ===================== 获取文章点赞数 =====================
-// GetArticleLikes 获取文章的总点赞数
 func GetArticleLikes(ctx *gin.Context) {
 	articleIDStr := ctx.Param("id")
-
-	// 参数校验
 	if articleIDStr == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "article id is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Article ID is required"})
 		return
 	}
-
 	articleID, err := strconv.ParseUint(articleIDStr, 10, 32)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid article id"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Article ID"})
 		return
 	}
+	uid := uint(articleID)
 
-	// 检查文章是否存在
-	var article models.Article
-	if err := global.Db.First(&article, articleID).Error; err != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-		return
-	}
+	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, uid)
 
-	// Redis key
-	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
+	// 1. 尝试从 Redis 获取点赞数
+	val, err := global.RedisDB.Get(ctxLike, likeCountKey).Result()
+	var likesCount int64
 
-	// 从 Redis 获取点赞数
-	likesCount, err := global.RedisDB.Get(ctxLike, likeCountKey).Int64()
-	if err != nil {
-		// 如果 Redis 中没有该 key，从数据库获取
+	if err == nil {
+		likesCount, _ = strconv.ParseInt(val, 10, 64)
+	} else {
+		// Redis 未命中，查 DB 并回填
+		var article models.Article
+		if err := global.Db.Select("likes_count").First(&article, uid).Error; err != nil {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+			return
+		}
 		likesCount = article.LikesCount
-		// 同步到 Redis
+		// 回填 Redis
 		global.RedisDB.Set(ctxLike, likeCountKey, likesCount, LikesCacheExpire)
 	}
 
-	// 获取当前用户的点赞状态（如果已认证）
+	// 2. 获取当前用户是否点赞
 	var userLiked bool
-	if userID, exists := ctx.Get("userID"); exists {
-		likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
-		userIDStr := strconv.FormatUint(uint64(userID.(uint)), 10)
+	if userIDVal, exists := ctx.Get("userID"); exists {
+		userID := userIDVal.(uint)
+		likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, uid)
+		userIDStr := strconv.FormatUint(uint64(userID), 10)
+
+		// 查 Redis Set
 		isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
 		if err == nil {
 			userLiked = isMember
+		} else {
+			// 如果 Redis Set 也不存在（可能过期了），查 DB 兜底
+			var count int64
+			global.Db.Model(&models.ArticleLike{}).Where("user_id = ? AND article_id = ?", userID, uid).Count(&count)
+			userLiked = count > 0
+			// 如果查到了，顺便回填 Redis Set (Lazy load)
+			if userLiked {
+				global.RedisDB.SAdd(ctxLike, likeSetKey, userIDStr)
+				global.RedisDB.Expire(ctxLike, likeSetKey, LikesCacheExpire)
+			}
 		}
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"article_id":  articleID,
+		"article_id":  uid,
 		"likes_count": likesCount,
 		"user_liked":  userLiked,
 	})
-}
-
-// ===================== 辅助函数 =====================
-
-// GetUserLikeStatus 获取用户对某篇文章的点赞状态（辅助函数）
-func GetUserLikeStatus(userID uint, articleID uint) (bool, error) {
-	likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
-	userIDStr := strconv.FormatUint(uint64(userID), 10)
-
-	isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
-	return isMember, err
-}
-
-// SyncLikesFromDB 从数据库同步点赞数到 Redis（用于数据恢复）
-func SyncLikesFromDB(articleID uint) error {
-	var article models.Article
-	if err := global.Db.First(&article, articleID).Error; err != nil {
-		return err
-	}
-
-	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
-	return global.RedisDB.Set(ctxLike, likeCountKey, article.LikesCount, LikesCacheExpire).Err()
-}
-
-func syncArticleCacheAfterLike(articleID uint) {
-	// 更新单篇文章缓存
-	cacheKey := fmt.Sprintf("articles:single:%d", articleID)
-	var article models.Article
-	if err := global.Db.First(&article, articleID).Error; err == nil {
-		data, _ := json.Marshal(article)
-		global.RedisDB.Set(ctxLike, cacheKey, data, 10*time.Minute)
-	}
-
-	// 清理分页列表缓存，让列表接口显示最新点赞数
-	keys := global.RedisDB.Keys(ctxLike, "articles:list:*").Val()
-	for _, k := range keys {
-		global.RedisDB.Del(ctxLike, k)
-	}
 }

@@ -9,58 +9,66 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
-
-	"strings"
 )
 
 func main() {
+	// 1. 初始化配置
 	config.InitConfig()
 
-	// 启动汇率定时任务（启动时立即获取一次汇率）
-	services.StartExchangeRateScheduler()
+	// 2. 创建全局 Context 用于优雅控制后台任务
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // 确保 main 退出时 context 被取消
 
+	// 3. 启动汇率定时任务 (传入 context)
+	services.StartExchangeRateScheduler(ctx)
+
+	// 4. 路由与服务器配置
 	r := router.SetupRouter()
+	port := resolvePort(config.AppConfig.App.Port)
 
-	// 确保端口号以冒号开头
-	port := config.AppConfig.App.Port
-
-	if port == "" {
-		port = "8080"
-	}
-	if !strings.HasPrefix(port, ":") {
-		port = ":" + port
-	}
-
-	srv := &http.Server{ // http服务器实例
+	srv := &http.Server{
 		Addr:    port,
 		Handler: r,
 	}
 
-	// 启动服务器并且进行监听
+	// 5. 启动 HTTP 服务器
 	go func() {
+		log.Printf("Server started on port %s", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Listen: %s\n", err)
+			log.Fatalf("Listen error: %s\n", err)
 		}
 	}()
-	log.Printf("Server started on port %v", port)
 
-	// 创建通道监听系统信号
+	// 6. 监听退出信号
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM) // 中断信号发送给quit
-	<-quit                                             // 阻塞主 goroutine，直到收到信号，程序才会继续执行后面的退出逻辑
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
 
-	log.Println("Shutting down server...") // 程序接收到中断信号后的处理
+	log.Println("Shutting down server...")
 
-	// 创建 5 秒超时上下文，正常情况下等待正在处理的请求完成，如果超过 5 秒仍未完成，则强制关闭
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel() // 函数退出时释放上下文资源
+	// 7. 优雅停机流程
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 
-	// 会停止接收新的请求
-	if err := srv.Shutdown(ctx); err != nil {
+	// 停止 HTTP 服务
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %s", err)
 	}
 
-	log.Println("Server exiting")
+	// 这里的 cancel() 会被 defer 调用，通知 scheduler 停止
+	log.Println("Server exited")
+}
+
+// 辅助函数：处理端口格式
+func resolvePort(port string) string {
+	if port == "" {
+		return ":8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		return ":" + port
+	}
+	return port
 }

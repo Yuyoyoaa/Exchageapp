@@ -23,6 +23,7 @@ func Register(ctx *gin.Context) {
 		Avatar   string `json:"avatar"`
 	}
 
+	// 将JSON内容映射到input结构体
 	if err := ctx.ShouldBindJSON(&input); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -111,7 +112,7 @@ func Login(ctx *gin.Context) {
 	}
 
 	key := "login_fail:" + input.Username
-	failCount, _ := global.RedisDB.Get(ctx, key).Int()
+	failCount, _ := global.RedisDB.Get(ctx, key).Int() // 执行 Redis GET 命令获取指定 key 的值，将获取到的字符串值转换为整数
 	if failCount >= 5 {
 		ctx.JSON(http.StatusForbidden, gin.H{"error": "尝试次数过多，请15分钟后再试"})
 		return

@@ -21,17 +21,23 @@ func SetupRouter() *gin.Engine {
 	}
 	// 转为绝对路径，便于调试
 	absUploadDir, _ := filepath.Abs(uploadDir)
-	// 静态资源映射
+	// 静态资源映射（让客户端可以通过HTTP直接访问服务器上的文件）
 	r.Static("/uploads", absUploadDir)
 
 	// CORS 配置
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
+		// 允许哪些前端域名访问
+		AllowOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		// 允许哪些HTTP方法
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
+		// 允许哪些请求头
+		AllowHeaders: []string{"Origin", "Content-Type", "Authorization"},
+		// 允许客户端访问哪些响应头
+		ExposeHeaders: []string{"Content-Length"},
+		// 是否允许发送Cookie等凭据
 		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
+		// 预检请求缓存时间（秒）
+		MaxAge: 12 * time.Hour,
 	}))
 
 	// ===== 用户注册登录 =====
@@ -44,7 +50,10 @@ func SetupRouter() *gin.Engine {
 	// ===== 公共 API =====
 	api := r.Group("/api")
 	{
-		api.GET("/exchangeRates", controllers.GetExchangeRates)
+		// GetLatestRate 需要参数，不适合作为列表接口
+		api.GET("/exchangeRates", controllers.GetBaseRates)
+
+		// 如果前端需要单独计算某一对，可以保留这个接口 (可选)
 		api.GET("/exchangeRates/latest", controllers.GetLatestRate)
 
 		// 文章公共接口（无需登录）

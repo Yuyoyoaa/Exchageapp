@@ -49,7 +49,10 @@ controllers/
   admin_controllers.go
   article_controllers.go
   auth_controllers.go
+  category_controllers.go
+  comment_controllers.go
   exchange_rate_controllers.go
+  favorites_controllers.go
   like_controllers.go
 global/
   global.go
@@ -57,11 +60,17 @@ middlewares/
   auth_middlewares.go
   role_middlewares.go
 models/
+  article_like.go
   article.go
+  category.go
+  comment.go
   exchange_rate.go
+  favorite.go
   user.go
 router/
   router.go
+services/
+  exchange_rate_scheduler.go
 utils/
   utils.go
 .prettierrc.json
@@ -175,10 +184,17 @@ func InitDB() {
 	if err := global.Db.AutoMigrate(
 		&models.User{},
 		&models.Article{},
+		&models.Category{},
+		&models.ArticleLike{},
+		&models.Favorite{},
+		&models.Comment{},
 		&models.ExchangeRate{},
 	); err != nil {
 		log.Fatalf("Failed to migrate database, got error: %v", err)
 	}
+
+	// 为 likes 添加唯一索引（兼容不同 gorm 版本的写法，若报错可删）：
+	_ = global.Db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_article ON article_likes (user_id, article_id);")
 
 	fmt.Println("Database initialized and migrated successfully")
 }
@@ -335,118 +351,296 @@ func DeleteUser(ctx *gin.Context) {
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"exchangeapp/global"
 	"exchangeapp/models"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
-var cacheKey = "articles"
+var ctxRedis = context.Background()
 
-func CreateArticle(ctx *gin.Context) {
-	var article models.Article
+const (
+	ArticleListCachePrefix = "articles:list:"   // 分页+分类
+	ArticleSingleCache     = "articles:single:" // 单篇文章缓存
+	ArticleHotCache        = "articles:hot"     // 热门文章缓存
+	CacheExpire            = 10 * time.Minute
+)
 
-	if err := ctx.ShouldBindJSON(&article); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	if err := global.Db.Create(&article).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// 在新增文章以后，删除旧缓存，让下次读取时强制从数据库刷新数据
-	if err := global.RedisDB.Del(ctx.Request.Context(), cacheKey).Err(); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	ctx.JSON(http.StatusCreated, article)
+// ArticleListResponse 定义了文章列表接口的响应结构，包含数据和总数
+// 此结构与前端 Vue 组件中对接口返回值的预期相匹配：{ data: Article[], total: number }
+type ArticleListResponse struct {
+	Data  []models.Article `json:"data"`
+	Total int64            `json:"total"`
 }
 
+// ======================= 创建文章 =========================
+
+func CreateArticle(ctx *gin.Context) {
+	var req models.Article
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	req.AuthorID = ctx.GetUint("userID")
+
+	if err := global.Db.Create(&req).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	clearArticleCache()
+	ctx.JSON(http.StatusCreated, req)
+}
+
+// ======================= 更新文章 =========================
+
+func UpdateArticle(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	var req models.Article
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var article models.Article
+	if err := global.Db.First(&article, articleID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
+		return
+	}
+
+	article.Title = req.Title
+	article.Content = req.Content
+	article.Preview = req.Preview
+	article.Cover = req.Cover
+	article.CategoryID = req.CategoryID
+	article.Status = req.Status
+
+	if err := global.Db.Save(&article).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	clearArticleCacheByID(articleID)
+	ctx.JSON(http.StatusOK, gin.H{"message": "文章已更新", "data": article})
+}
+
+// ======================= 删除文章 =========================
+
+func DeleteArticle(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+
+	if err := global.Db.Delete(&models.Article{}, articleID).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
+		return
+	}
+
+	clearArticleCacheByID(articleID)
+	ctx.JSON(http.StatusOK, gin.H{"message": "文章已删除"})
+}
+
+// ======================= 文章列表（含缓存） =========================
+
 func GetArticles(ctx *gin.Context) {
-	cachedData, err := global.RedisDB.Get(ctx.Request.Context(), cacheKey).Result()
+	pageStr := ctx.DefaultQuery("page", "1")
+	limitStr := ctx.DefaultQuery("limit", "10")
+	category := ctx.Query("category")
 
-	// 未命中缓存
-	if err == redis.Nil {
-		var articles []models.Article
+	page, _ := strconv.Atoi(pageStr)
+	limit, _ := strconv.Atoi(limitStr)
 
-		// 查询数据库
-		if err := global.Db.Find(&articles).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			} else {
-				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			}
+	// 构造缓存键时，将 category 设为 “all” 或具体的 ID
+	categoryCachePart := category
+	if categoryCachePart == "" {
+		categoryCachePart = "all"
+	}
+	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d", ArticleListCachePrefix, categoryCachePart, page, limit)
+
+	// 读取缓存：如果命中，直接返回 ArticleListResponse 结构
+	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
+		var resp ArticleListResponse
+		if json.Unmarshal([]byte(cached), &resp) == nil {
+			// 缓存命中，直接返回包含 data 和 total 的结构
+			ctx.JSON(http.StatusOK, resp)
 			return
 		}
-
-		// 将文章序列号为json
-		articleJSON, err := json.Marshal(articles)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// 写入缓存
-		if err := global.RedisDB.Set(ctx.Request.Context(), cacheKey, articleJSON, 10*time.Minute).Err(); err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		ctx.JSON(http.StatusOK, articles) // 返回客户端
-		return
 	}
 
-	// 其他 Redis 错误
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 命中缓存
+	// 数据库查询
 	var articles []models.Article
-	if err := json.Unmarshal([]byte(cachedData), &articles); err != nil {
+	var total int64
+	db := global.Db.Model(&models.Article{}) // 使用 Model() 指定查询的表
+
+	// 应用分类筛选条件 (Go 代码原本就支持分类筛选)
+	if category != "" {
+		db = db.Where("category_id = ?", category)
+	}
+
+	// 1. 获取总数
+	if err := db.Count(&total).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "无法获取文章总数"})
+		return
+	}
+
+	// 2. 获取分页数据
+	if err := db.Order("created_at DESC").
+		Offset((page - 1) * limit).
+		Limit(limit).
+		Find(&articles).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 构造与前端预期匹配的响应结构
+	resp := ArticleListResponse{
+		Data:  articles,
+		Total: total,
+	}
+
+	// 写入缓存
+	data, _ := json.Marshal(resp)
+	global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// ======================= 单篇文章 + 浏览量更新 + 缓存同步 =========================
+
+func GetArticleByID(ctx *gin.Context) {
+	id := ctx.Param("id")
+	cacheKey := ArticleSingleCache + id
+
+	// 读取缓存
+	if cached, err := global.RedisDB.Get(ctxRedis, cacheKey).Result(); err == nil {
+		var article models.Article
+		if json.Unmarshal([]byte(cached), &article) == nil {
+
+			// 浏览量 +1
+			// 注意：这里只更新数据库，但不会立即更新文章列表缓存，以避免写入风暴。
+			// 列表缓存的更新依赖于过期或 Create/Update/Delete 操作。
+			global.Db.Model(&article).
+				UpdateColumn("views_count", gorm.Expr("views_count + 1"))
+
+			article.ViewsCount += 1 // 同步更新结构体，避免旧数据返回
+
+			// 更新缓存 (只更新单篇文章缓存)
+			data, _ := json.Marshal(article)
+			global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
+			ctx.JSON(http.StatusOK, article)
+			return
+		}
+	}
+
+	// 数据库读取文章
+	var article models.Article
+	if err := global.Db.First(&article, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	// 浏览量 +1
+	global.Db.Model(&article).UpdateColumn("views_count", gorm.Expr("views_count + 1"))
+	article.ViewsCount += 1
+
+	// 更新缓存
+	data, _ := json.Marshal(article)
+	global.RedisDB.Set(ctxRedis, cacheKey, data, CacheExpire)
+
+	ctx.JSON(http.StatusOK, article)
+}
+
+// ======================= 热门文章缓存 =========================
+
+func GetHotArticles(ctx *gin.Context) {
+	if cached, err := global.RedisDB.Get(ctxRedis, ArticleHotCache).Result(); err == nil {
+		var articles []models.Article
+		if json.Unmarshal([]byte(cached), &articles) == nil {
+			ctx.JSON(http.StatusOK, articles)
+			return
+		}
+	}
+
+	var articles []models.Article
+	if err := global.Db.Order("views_count DESC").Limit(10).Find(&articles).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, _ := json.Marshal(articles)
+	global.RedisDB.Set(ctxRedis, ArticleHotCache, data, CacheExpire)
 
 	ctx.JSON(http.StatusOK, articles)
 }
 
-func GetArticleByID(ctx *gin.Context) {
-	// 获取路径的参数
-	id := ctx.Param("id")
-
-	var article models.Article
-
-	if err := global.Db.Where("id = ?", id).First(&article).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) { // 错误匹配
-			ctx.JSON(http.StatusNotFound, gin.H{
-				"error": err.Error(),
-			})
-		} else {
-			ctx.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
-		}
+// 上传文章封面
+func UploadArticleCover(ctx *gin.Context) {
+	// 1. 获取上传的文件 (表单 key 为 "file")
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "获取上传文件失败"})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, article)
+	// 2. 检查文件扩展名 (可选，简单的安全性检查)
+	ext := filepath.Ext(file.Filename)
+	allowExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	if !allowExts[ext] {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "只允许上传 jpg, png, gif 图片"})
+		return
+	}
+
+	// 3. 确保存储目录存在
+	uploadDir := "./uploads/covers"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建上传目录失败"})
+		return
+	}
+
+	// 4. 生成唯一文件名 (使用纳秒时间戳防止重名)
+	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+	dst := filepath.Join(uploadDir, filename)
+
+	// 5. 保存文件
+	if err := ctx.SaveUploadedFile(file, dst); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	// 6. 返回可访问的 URL (相对路径，前端需要拼接 baseURL)
+	// URL 格式: /uploads/covers/123456789.jpg
+	url := "/uploads/covers/" + filename
+	ctx.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// ======================= 缓存清理 =========================
+
+func clearArticleCache() {
+	keys := global.RedisDB.Keys(ctxRedis, ArticleListCachePrefix+"*").Val()
+	for _, k := range keys {
+		global.RedisDB.Del(ctxRedis, k)
+	}
+	global.RedisDB.Del(ctxRedis, ArticleHotCache)
+}
+
+func clearArticleCacheByID(id string) {
+	global.RedisDB.Del(ctxRedis, ArticleSingleCache+id)
+	clearArticleCache()
 }
 </file>
 
@@ -457,7 +651,10 @@ import (
 	"exchangeapp/global"
 	"exchangeapp/models"
 	"exchangeapp/utils"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -526,7 +723,7 @@ func Register(ctx *gin.Context) {
 		return
 	}
 
-	token, err := utils.GenerateJWT(user.Username)
+	token, err := utils.GenerateJWT(user.Username, user.Role)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -580,7 +777,7 @@ func Login(ctx *gin.Context) {
 	// 登录成功，删除失败计数
 	global.RedisDB.Del(ctx, key)
 
-	token, err := utils.GenerateJWT(user.Username)
+	token, err := utils.GenerateJWT(user.Username, user.Role)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -608,7 +805,7 @@ func UpdateProfile(ctx *gin.Context) {
 
 	var input struct {
 		Nickname string `json:"nickname"`
-		Email    string `json:"email" binding:"email"`
+		Email    string `json:"email" binding:"omitempty,email"`
 		Avatar   string `json:"avatar"`
 		Password string `json:"password"`
 	}
@@ -661,38 +858,333 @@ func UpdateProfile(ctx *gin.Context) {
 	user.Password = ""
 	ctx.JSON(http.StatusOK, user)
 }
+
+func UploadAvatar(ctx *gin.Context) {
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "获取上传文件失败"})
+		return
+	}
+
+	// 简单的扩展名检查
+	ext := filepath.Ext(file.Filename)
+	allowExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	if !allowExts[ext] {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "只允许上传 jpg, png, gif 图片"})
+		return
+	}
+
+	// 确保存储目录存在
+	uploadDir := "./uploads/avatars"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建上传目录失败"})
+		return
+	}
+
+	// 生成唯一文件名
+	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+	dst := filepath.Join(uploadDir, filename)
+
+	if err := ctx.SaveUploadedFile(file, dst); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	// 返回相对路径 URL
+	url := "/uploads/avatars/" + filename
+	ctx.JSON(http.StatusOK, gin.H{"url": url})
+}
+</file>
+
+<file path="controllers/category_controllers.go">
+package controllers
+
+import (
+	"encoding/json"
+	"errors"
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+const CategoryCacheKey = "categories:list"
+
+// ===== 公共接口 =====
+func GetCategories(ctx *gin.Context) {
+	// 尝试从缓存获取
+	cached, err := global.RedisDB.Get(ctxRedis, CategoryCacheKey).Result()
+	if err == nil {
+		var categories []models.Category
+		if json.Unmarshal([]byte(cached), &categories) == nil {
+			ctx.JSON(http.StatusOK, categories)
+			return
+		}
+	}
+
+	// 缓存未命中，查询数据库
+	var categories []models.Category
+	if err := global.Db.Order("id ASC").Find(&categories).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 写入缓存
+	data, _ := json.Marshal(categories)
+	global.RedisDB.Set(ctxRedis, CategoryCacheKey, data, CacheExpire)
+
+	ctx.JSON(http.StatusOK, categories)
+}
+
+// ===== 管理员接口 =====
+func CreateCategory(ctx *gin.Context) {
+	var category models.Category
+	if err := ctx.ShouldBindJSON(&category); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := global.Db.Create(&category).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 清除缓存，下次读取刷新
+	global.RedisDB.Del(ctxRedis, CategoryCacheKey)
+
+	ctx.JSON(http.StatusCreated, category)
+}
+
+func DeleteCategory(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, _ := strconv.Atoi(idStr)
+
+	var category models.Category
+	if err := global.Db.First(&category, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "分类不存在"})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	if err := global.Db.Delete(&category).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
+		return
+	}
+
+	// 清除缓存
+	global.RedisDB.Del(ctxRedis, CategoryCacheKey)
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "分类已删除"})
+}
+</file>
+
+<file path="controllers/comment_controllers.go">
+package controllers
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"exchangeapp/global"
+	"exchangeapp/models"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm" // 导入 GORM 包以支持事务
+)
+
+const (
+	CommentCachePrefix = "comments:article:" // 每篇文章的评论缓存 key
+)
+
+// 为了兼容原代码中未提供的 ctxRedis，这里假设其已在全局或别处定义，用于 Redis 操作。
+// var ctxRedis = context.Background()
+
+// ======== 创建评论 ========
+func CreateComment(ctx *gin.Context) {
+	userID := ctx.GetUint("userID")
+	var user models.User
+	if err := global.Db.First(&user, userID).Error; err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在"})
+		return
+	}
+	articleIDStr := ctx.Param("id")
+	articleID, _ := strconv.Atoi(articleIDStr)
+
+	var comment models.Comment
+	if err := ctx.ShouldBindJSON(&comment); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	comment.ArticleID = uint(articleID)
+	comment.UserID = userID
+	if user.Nickname != "" {
+		comment.UserName = user.Nickname
+	} else {
+		comment.UserName = user.Username
+	}
+
+	if err := global.Db.Create(&comment).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 新增评论后清理文章所有分页缓存
+	clearCommentCache(uint(articleID))
+
+	ctx.JSON(http.StatusCreated, comment)
+}
+
+// ======== 删除评论（用户只能删自己的；管理员可删任何） ========
+func DeleteComment(ctx *gin.Context) {
+	userID := ctx.GetUint("userID")
+	role := ctx.GetString("role") // "admin" or "user"
+	commentID := ctx.Param("id")
+
+	var comment models.Comment
+	if err := global.Db.First(&comment, commentID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "评论不存在"})
+		return
+	}
+
+	// 权限控制
+	if role != "admin" && comment.UserID != userID {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "只能删除自己的评论"})
+		return
+	}
+
+	// 事务，保证级联删除
+	err := global.Db.Transaction(func(tx *gorm.DB) error {
+
+		// 顶级评论 => 删除所有子评论
+		if comment.ParentID == nil {
+			if err := tx.Where("parent_id = ?", comment.ID).
+				Delete(&models.Comment{}).Error; err != nil {
+				return fmt.Errorf("failed to delete child comments: %w", err)
+			}
+		}
+
+		// 删除当前评论
+		if err := tx.Delete(&comment).Error; err != nil {
+			return fmt.Errorf("failed to delete comment: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("删除失败: %s", err.Error()),
+		})
+		return
+	}
+
+	// 清除该文章的缓存
+	clearCommentCache(comment.ArticleID)
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "评论已删除"})
+}
+
+// ======== 获取文章评论（支持分页 + Redis 缓存 + Preload 用户头像） ========
+func GetCommentsByArticleID(ctx *gin.Context) {
+	articleID := ctx.Param("id")
+	pageStr := ctx.DefaultQuery("page", "1")
+	limitStr := ctx.DefaultQuery("limit", "10")
+
+	page, _ := strconv.Atoi(pageStr)
+	limit, _ := strconv.Atoi(limitStr)
+	offset := (page - 1) * limit
+
+	// Redis 缓存 key
+	cacheKey := fmt.Sprintf("%s%s:page_%d:limit_%d",
+		CommentCachePrefix, articleID, page, limit)
+
+	// ---------- 读取缓存 ----------
+	cached, err := global.RedisDB.Get(ctx, cacheKey).Result()
+	if err == nil && cached != "" {
+		var cachedComments []models.Comment
+		if json.Unmarshal([]byte(cached), &cachedComments) == nil {
+			ctx.JSON(http.StatusOK, cachedComments)
+			return
+		}
+	}
+
+	// ---------- 查询数据库 ----------
+	var comments []models.Comment
+	err = global.Db.
+		Where("article_id = ?", articleID).
+		Order("created_at ASC").
+		Offset(offset).Limit(limit).
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			// 【修改】加载 nickname 和 avatar
+			return db.Select("id", "username", "nickname", "avatar")
+		}).
+		Find(&comments).Error
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// ---------- 写入缓存 ----------
+	bytes, _ := json.Marshal(comments)
+	global.RedisDB.Set(ctx, cacheKey, bytes, CacheExpire)
+
+	// ---------- 输出 ----------
+	ctx.JSON(http.StatusOK, comments)
+}
+
+// ======== 辅助函数：清理某文章的所有分页评论缓存 ========
+func clearCommentCache(articleID uint) {
+	pattern := fmt.Sprintf("%s%d:page_*", CommentCachePrefix, articleID)
+	// 警告：原代码中使用的 ctxRedis 未定义。为保持代码完整性，我们暂时忽略这一行中 err 的处理，假设 ctxRedis 可用。
+	keys, _ := global.RedisDB.Keys(ctxRedis, pattern).Result()
+	for _, k := range keys {
+		global.RedisDB.Del(ctxRedis, k)
+	}
+}
 </file>
 
 <file path="controllers/exchange_rate_controllers.go">
 package controllers
 
 import (
+	"context"
+	"encoding/json"
 	"exchangeapp/global"
 	"exchangeapp/models"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
+// CreateExchangeRate 手动创建汇率
 func CreateExchangeRate(ctx *gin.Context) {
 	var exchangeRate models.ExchangeRate
-
 	if err := ctx.ShouldBindJSON(&exchangeRate); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	exchangeRate.Date = time.Now()
 
 	if err := global.Db.Create(&exchangeRate).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	cacheKey := fmt.Sprintf("exchangeRate:%s:%s", exchangeRate.FromCurrency, exchangeRate.ToCurrency)
+	data, _ := json.Marshal(exchangeRate)
+	global.RedisDB.Set(context.Background(), cacheKey, data, 24*time.Hour)
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"message": "汇率创建成功",
@@ -700,16 +1192,173 @@ func CreateExchangeRate(ctx *gin.Context) {
 	})
 }
 
+// GetExchangeRates 查询汇率历史
 func GetExchangeRates(ctx *gin.Context) {
-	var exchangeRates []models.ExchangeRate
+	from := ctx.Query("from")
+	to := ctx.Query("to")
+	start := ctx.Query("start")
+	end := ctx.Query("end")
 
-	if err := global.Db.Find(&exchangeRates).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+	db := global.Db
+	if from != "" && to != "" {
+		db = db.Where("from_currency = ? AND to_currency = ?", from, to)
+	}
+
+	if start != "" {
+		if t, err := time.Parse("2006-01-02", start); err == nil {
+			db = db.Where("date >= ?", t)
+		}
+	}
+	if end != "" {
+		if t, err := time.Parse("2006-01-02", end); err == nil {
+			db = db.Where("date <= ?", t)
+		}
+	}
+
+	var rates []models.ExchangeRate
+	if err := db.Order("date desc").Find(&rates).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, rates)
+}
+
+// GetLatestRate 获取最新汇率
+func GetLatestRate(ctx *gin.Context) {
+	from := ctx.Query("from")
+	to := ctx.Query("to")
+
+	if from == "" || to == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "参数 from 和 to 必填"})
+		return
+	}
+
+	// 自对自汇率直接返回 1
+	if from == to {
+		ctx.JSON(http.StatusOK, models.ExchangeRate{
+			FromCurrency: from,
+			ToCurrency:   to,
+			Rate:         1,
+			Date:         time.Now(),
 		})
 		return
 	}
-	ctx.JSON(http.StatusOK, exchangeRates)
+
+	cacheKey := fmt.Sprintf("exchangeRate:%s:%s", from, to)
+	val, err := global.RedisDB.Get(context.Background(), cacheKey).Result()
+	if err == nil && val != "" {
+		var rate models.ExchangeRate
+		json.Unmarshal([]byte(val), &rate)
+		ctx.JSON(http.StatusOK, rate)
+		return
+	}
+
+	var rate models.ExchangeRate
+	if err := global.Db.Where("from_currency = ? AND to_currency = ?", from, to).Order("date desc").First(&rate).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "汇率未找到"})
+		return
+	}
+
+	data, _ := json.Marshal(rate)
+	global.RedisDB.Set(context.Background(), cacheKey, data, 24*time.Hour)
+
+	ctx.JSON(http.StatusOK, rate)
+}
+</file>
+
+<file path="controllers/favorites_controllers.go">
+package controllers
+
+import (
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+)
+
+// ======== 收藏 / 取消收藏 (Toggle 逻辑，用于文章详情页) ========
+func ToggleFavorite(ctx *gin.Context) {
+	userID := ctx.GetUint("userID")
+	articleIDStr := ctx.Param("id")
+
+	articleID, err := strconv.Atoi(articleIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "文章 ID 无效"})
+		return
+	}
+
+	var fav models.Favorite
+
+	// 查是否已收藏
+	err = global.Db.Where("user_id = ? AND article_id = ?", userID, articleID).First(&fav).Error
+	if err == nil {
+		// 已收藏 → 取消
+		global.Db.Delete(&fav)
+		ctx.JSON(http.StatusOK, gin.H{"message": "取消收藏"})
+		return
+	}
+
+	// 创建收藏
+	fav = models.Favorite{
+		UserID:    userID,
+		ArticleID: uint(articleID),
+	}
+
+	if err := global.Db.Create(&fav).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "收藏成功"})
+}
+
+// ======== 【新增】直接删除收藏记录 (用于收藏列表页) ========
+func DeleteFavorite(ctx *gin.Context) {
+	userID := ctx.GetUint("userID")
+	favIDStr := ctx.Param("id") // 这里传入的是 favorite 表的 ID，不是 article_id
+
+	favID, err := strconv.Atoi(favIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "收藏 ID 无效"})
+		return
+	}
+
+	// 【核心修复】：使用 Unscoped() 忽略软删除标记，强制物理删除
+	// 确保 user_id 匹配以保证权限安全
+	result := global.Db.Unscoped().Where("id = ? AND user_id = ?", favID, userID).Delete(&models.Favorite{})
+
+	if result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	// 只要没有数据库错误，即使 RowsAffected 为 0 也返回成功，防止前端因为“重复删除”而报错卡住
+	ctx.JSON(http.StatusOK, gin.H{"message": "已移除收藏"})
+}
+
+// ======== 获取用户收藏的文章 ========
+func GetUserFavorites(ctx *gin.Context) {
+	userID := ctx.GetUint("userID")
+
+	var favorites []models.Favorite
+
+	// 使用 Preload 加载 Article，即使 Article 也是软删除的，Gorm 默认会过滤掉 deleted_at 不为空的文章
+	// 如果 Article 是硬删除，那 Article 结构体就是零值
+	// 如果你想查出已软删除的文章，可以使用 Unscoped()，但这里我们假设如果文章被删了，就显示"已失效"
+	if err := global.Db.
+		Preload("Article").
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Find(&favorites).Error; err != nil {
+
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, favorites)
 }
 </file>
 
@@ -717,52 +1366,231 @@ func GetExchangeRates(ctx *gin.Context) {
 package controllers
 
 import (
+	"context"
+	"encoding/json"
 	"exchangeapp/global"
+	"exchangeapp/models"
+	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
+const (
+	// Redis key 前缀：用于存储文章点赞集合
+	ArticleLikeSetPrefix = "article:likes:" // 存储 user_id 集合，key 为 article:likes:{articleID}
+	// Redis key 前缀：用于存储点赞数计数
+	ArticleLikeCountPrefix = "article:likes:count:" // 存储点赞数，key 为 article:likes:count:{articleID}
+	// 缓存过期时间
+	LikesCacheExpire = 24 * time.Hour
+)
+
+var ctxLike = context.Background()
+
+// ===================== 点赞文章 =====================
+// LikeArticle 点赞或取消点赞文章
+// 第一次点赞：将用户ID加入Redis集合，点赞数+1
+// 第二次点赞（取消）：将用户ID从Redis集合移除，点赞数-1
 func LikeArticle(ctx *gin.Context) {
-	articleID := ctx.Param("id")
+	userID := ctx.GetUint("userID")
+	articleIDStr := ctx.Param("id")
 
-	likeKey := "article:" + articleID + ":likes"
-
-	// 获取点赞后的数量
-	likes, err := global.RedisDB.Incr(ctx.Request.Context(), likeKey).Result()
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+	// 参数校验
+	if articleIDStr == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "article id is required"})
 		return
 	}
 
+	articleID, err := strconv.ParseUint(articleIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid article id"})
+		return
+	}
+
+	// 检查文章是否存在
+	var article models.Article
+	if err := global.Db.First(&article, articleID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
+		return
+	}
+
+	// Redis keys
+	likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
+	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
+	userIDStr := strconv.FormatUint(uint64(userID), 10)
+
+	// 检查用户是否已经点赞过该文章
+	isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check like status"})
+		return
+	}
+
+	var message string
+	var action string
+
+	if isMember {
+		// 用户已点赞，现在取消点赞
+		// 从 Redis Set 中删除用户ID
+		if err := global.RedisDB.SRem(ctxLike, likeSetKey, userIDStr).Err(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlike article"})
+			return
+		}
+
+		// 点赞数 -1（如果存在的话）
+		global.RedisDB.Decr(ctxLike, likeCountKey)
+
+		// 更新数据库：点赞数 -1
+		global.Db.Model(&article).Update("likes_count", article.LikesCount-1)
+
+		// 同步删除点赞记录（可选，用于数据持久化）
+		global.Db.Where("user_id = ? AND article_id = ?", userID, articleID).
+			Delete(&models.ArticleLike{})
+
+		message = "article unliked successfully"
+		action = "unlike"
+	} else {
+		// 用户未点赞，现在点赞
+		// 添加用户ID到 Redis Set
+		if err := global.RedisDB.SAdd(ctxLike, likeSetKey, userIDStr).Err(); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to like article"})
+			return
+		}
+
+		// 设置 Redis key 过期时间（可选）
+		global.RedisDB.Expire(ctxLike, likeSetKey, LikesCacheExpire)
+
+		// 点赞数 +1
+		global.RedisDB.Incr(ctxLike, likeCountKey)
+		global.RedisDB.Expire(ctxLike, likeCountKey, LikesCacheExpire)
+
+		// 更新数据库：点赞数 +1
+		global.Db.Model(&article).Update("likes_count", article.LikesCount+1)
+
+		// 同步添加点赞记录到数据库（用于数据持久化）
+		articleLike := models.ArticleLike{
+			UserID:    userID,
+			ArticleID: uint(articleID),
+		}
+		if err := global.Db.Create(&articleLike).Error; err != nil {
+			// 如果数据库操作失败，从 Redis 回滚
+			global.RedisDB.SRem(ctxLike, likeSetKey, userIDStr)
+			global.RedisDB.Decr(ctxLike, likeCountKey)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save like record"})
+			return
+		}
+
+		message = "article liked successfully"
+		action = "like"
+	}
+
+	// 同步文章缓存（立即更新单篇文章和列表缓存）
+	syncArticleCacheAfterLike(uint(articleID))
+
+	// 获取当前点赞数
+	likesCount, _ := global.RedisDB.Get(ctxLike, likeCountKey).Int64()
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": "Successfully Liked",
-		"likes":   likes, // 返回点赞数量保持一致性
+		"message":     message,
+		"action":      action,
+		"article_id":  articleID,
+		"user_id":     userID,
+		"likes_count": likesCount,
 	})
 }
 
+// ===================== 获取文章点赞数 =====================
+// GetArticleLikes 获取文章的总点赞数
 func GetArticleLikes(ctx *gin.Context) {
-	articleID := ctx.Param("id")
+	articleIDStr := ctx.Param("id")
 
-	likeKey := "article:" + articleID + ":likes"
-
-	likes, err := global.RedisDB.Get(ctx.Request.Context(), likeKey).Result()
-
-	if err == redis.Nil { // key不存在
-		likes = "0"
-	} else if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+	// 参数校验
+	if articleIDStr == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "article id is required"})
 		return
 	}
 
+	articleID, err := strconv.ParseUint(articleIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid article id"})
+		return
+	}
+
+	// 检查文章是否存在
+	var article models.Article
+	if err := global.Db.First(&article, articleID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
+		return
+	}
+
+	// Redis key
+	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
+
+	// 从 Redis 获取点赞数
+	likesCount, err := global.RedisDB.Get(ctxLike, likeCountKey).Int64()
+	if err != nil {
+		// 如果 Redis 中没有该 key，从数据库获取
+		likesCount = article.LikesCount
+		// 同步到 Redis
+		global.RedisDB.Set(ctxLike, likeCountKey, likesCount, LikesCacheExpire)
+	}
+
+	// 获取当前用户的点赞状态（如果已认证）
+	var userLiked bool
+	if userID, exists := ctx.Get("userID"); exists {
+		likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
+		userIDStr := strconv.FormatUint(uint64(userID.(uint)), 10)
+		isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
+		if err == nil {
+			userLiked = isMember
+		}
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"likes": likes,
+		"article_id":  articleID,
+		"likes_count": likesCount,
+		"user_liked":  userLiked,
 	})
+}
+
+// ===================== 辅助函数 =====================
+
+// GetUserLikeStatus 获取用户对某篇文章的点赞状态（辅助函数）
+func GetUserLikeStatus(userID uint, articleID uint) (bool, error) {
+	likeSetKey := fmt.Sprintf("%s%d", ArticleLikeSetPrefix, articleID)
+	userIDStr := strconv.FormatUint(uint64(userID), 10)
+
+	isMember, err := global.RedisDB.SIsMember(ctxLike, likeSetKey, userIDStr).Result()
+	return isMember, err
+}
+
+// SyncLikesFromDB 从数据库同步点赞数到 Redis（用于数据恢复）
+func SyncLikesFromDB(articleID uint) error {
+	var article models.Article
+	if err := global.Db.First(&article, articleID).Error; err != nil {
+		return err
+	}
+
+	likeCountKey := fmt.Sprintf("%s%d", ArticleLikeCountPrefix, articleID)
+	return global.RedisDB.Set(ctxLike, likeCountKey, article.LikesCount, LikesCacheExpire).Err()
+}
+
+func syncArticleCacheAfterLike(articleID uint) {
+	// 更新单篇文章缓存
+	cacheKey := fmt.Sprintf("articles:single:%d", articleID)
+	var article models.Article
+	if err := global.Db.First(&article, articleID).Error; err == nil {
+		data, _ := json.Marshal(article)
+		global.RedisDB.Set(ctxLike, cacheKey, data, 10*time.Minute)
+	}
+
+	// 清理分页列表缓存，让列表接口显示最新点赞数
+	keys := global.RedisDB.Keys(ctxLike, "articles:list:*").Val()
+	for _, k := range keys {
+		global.RedisDB.Del(ctxLike, k)
+	}
 }
 </file>
 
@@ -785,6 +1613,8 @@ var (
 package middlewares
 
 import (
+	"exchangeapp/global"
+	"exchangeapp/models"
 	"exchangeapp/utils"
 	"net/http"
 
@@ -797,25 +1627,31 @@ func AuthMiddleWare() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		token := ctx.GetHeader("Authorization")
 		if token == "" {
-			ctx.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header is required",
-			})
-			ctx.Abort() // 阻止后续的中间件和处理函数执行,但不会中断当前函数中 ctx.Abort()之后的代码执行
-			return
-		}
-		username, err := utils.ParseJWT(token)
-
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token: " + err.Error(),
-			})
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
 			ctx.Abort()
 			return
 		}
 
-		ctx.Set("username", username) // 用于在不同中间件传递kv数据
-		ctx.Next()
+		username, role, err := utils.ParseJWT(token)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: " + err.Error()})
+			ctx.Abort()
+			return
+		}
 
+		// 查询用户ID
+		var user models.User
+		if err := global.Db.Where("username = ?", username).First(&user).Error; err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+			ctx.Abort()
+			return
+		}
+
+		// 设置到 context
+		ctx.Set("userID", user.ID)
+		ctx.Set("username", username)
+		ctx.Set("role", role)
+		ctx.Next()
 	}
 }
 </file>
@@ -856,18 +1692,79 @@ func AdminMiddleware() gin.HandlerFunc {
 }
 </file>
 
-<file path="models/article.go">
+<file path="models/article_like.go">
 package models
 
 import "gorm.io/gorm"
 
-// 在mysql表格中都会变为小写
-type Article struct {
+// 点赞记录，确保每用户对每文章唯一
+type ArticleLike struct {
 	gorm.Model
-	Title   string `binding:"required"`
-	Content string `binding:"required"`
-	Preview string `binding:"required"` // 文字的预览
-	Likes   int    `gorm:"default:0"`
+	UserID    uint `gorm:"index;not null"`
+	ArticleID uint `gorm:"index;not null"`
+}
+
+// 在迁移或 DB 初始化后，为 (user_id, article_id) 添加唯一索引：
+// db.Model(&models.ArticleLike{}).AddUniqueIndex("idx_user_article", "user_id", "article_id")
+</file>
+
+<file path="models/article.go">
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type Article struct {
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	Title      string `json:"title" binding:"required"`
+	Content    string `json:"content" binding:"required"`
+	Preview    string `json:"preview" binding:"required"`
+	Cover      string `json:"cover,omitempty"`
+	LikesCount int64  `gorm:"default:0" json:"likesCount"`
+	ViewsCount int64  `gorm:"default:0" json:"viewsCount"`
+	AuthorID   uint   `json:"authorId"`             // 创建者（通常为 admin）
+	CategoryID uint   `json:"categoryId,omitempty"` // 分类
+	Status     string `gorm:"default:'published'" json:"status"`
+}
+</file>
+
+<file path="models/category.go">
+package models
+
+type Category struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"unique;not null" json:"name"`
+}
+</file>
+
+<file path="models/comment.go">
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type Comment struct {
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	ArticleID uint   `json:"articleId" gorm:"index;not null"`
+	UserID    uint   `json:"userId" gorm:"index;not null"`
+	UserName  string `json:"userName"`
+	Content   string `json:"content" binding:"required"`
+	ParentID  *uint  `json:"parentId,omitempty"` // 支持二级回复
+	User      User   `gorm:"foreignKey:UserID" json:"user,omitempty" binding:"-"`
 }
 </file>
 
@@ -882,6 +1779,28 @@ type ExchangeRate struct {
 	ToCurrency   string    `json:"toCurrency" binding:"required"`
 	Rate         float64   `json:"rate" binding:"required"`
 	Date         time.Time `json:"date"`
+}
+</file>
+
+<file path="models/favorite.go">
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// 收藏记录
+type Favorite struct {
+	ID        uint `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	UserID    uint    `gorm:"index;not null"`
+	ArticleID uint    `gorm:"index;not null"`
+	Article   Article `gorm:"foreignKey:ArticleID;references:ID" json:"Article"`
 }
 </file>
 
@@ -913,68 +1832,216 @@ package router
 import (
 	"exchangeapp/controllers"
 	"exchangeapp/middlewares"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-contrib/cors"
-
 	"github.com/gin-gonic/gin"
 )
 
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 允许跨域请求
+	// 从环境读取上传目录，默认 ./uploads
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		uploadDir = "./uploads"
+	}
+	// 转为绝对路径，便于调试
+	absUploadDir, _ := filepath.Abs(uploadDir)
+	// 静态资源映射
+	r.Static("/uploads", absUploadDir)
+
+	// CORS 配置
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}, // 添加 PATCH
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// 用户注册与登录
+	// ===== 用户注册登录 =====
 	auth := r.Group("/api/auth")
 	{
 		auth.POST("/login", controllers.Login)
 		auth.POST("/register", controllers.Register)
 	}
 
+	// ===== 公共 API =====
 	api := r.Group("/api")
 	{
-		// 不需要认证的公共接口
 		api.GET("/exchangeRates", controllers.GetExchangeRates)
+		api.GET("/exchangeRates/latest", controllers.GetLatestRate)
 
-		// 需要认证的接口组
-		authenticated := api.Group("")
-		authenticated.Use(middlewares.AuthMiddleWare())
+		// 文章公共接口（无需登录）
+		api.GET("/articles", controllers.GetArticles) // 分页 + 分类
+		api.GET("/articles/hot", controllers.GetHotArticles)
+		api.GET("/articles/:id", controllers.GetArticleByID) // 文章详情（自动 views++）
+		api.GET("/articles/:id/comments", controllers.GetCommentsByArticleID)
+		api.GET("/categories", controllers.GetCategories)
+		api.GET("/articles/:id/like", controllers.GetArticleLikes)
+	}
+
+	// ===== 需要认证的接口 =====
+	authAPI := api.Group("")
+	authAPI.Use(middlewares.AuthMiddleWare())
+	{
+		// 普通用户操作（点赞、评论）
+		authAPI.POST("/articles/:id/like", controllers.LikeArticle)        // 每用户只能点赞一次
+		authAPI.POST("/articles/:id/favorite", controllers.ToggleFavorite) // 收藏/取消收藏(在新闻页面操作)
+		authAPI.POST("/articles/:id/comments", controllers.CreateComment)  // 创建评论
+		authAPI.DELETE("/comments/:id", controllers.DeleteComment)         // 删除自己评论
+		authAPI.DELETE("/favorites/:id", controllers.DeleteFavorite)       // 通过收藏ID删除收藏（在个人收藏区操作）
+
+		// 用户信息
+		user := authAPI.Group("/user")
 		{
-			authenticated.POST("/exchangeRates", controllers.CreateExchangeRate)
-			authenticated.POST("/articles", controllers.CreateArticle)
-			authenticated.GET("/articles", controllers.GetArticles)
-			authenticated.GET("/articles/:id", controllers.GetArticleByID)
-			authenticated.POST("/articles/:id/like", controllers.LikeArticle)
-			authenticated.GET("/articles/:id/like", controllers.GetArticleLikes)
+			user.GET("/profile", controllers.GetProfile)
+			user.PUT("/profile", controllers.UpdateProfile)
+			user.GET("/favorites", controllers.GetUserFavorites)
+			user.POST("/upload/avatar", controllers.UploadAvatar)
+		}
 
-			// 用户信息接口
-			user := authenticated.Group("/user")
-			{
-				user.GET("/profile", controllers.GetProfile)
-				user.PUT("/profile", controllers.UpdateProfile)
-			}
+		// ===== 管理员 API =====
+		admin := authAPI.Group("/admin")
+		admin.Use(middlewares.AdminMiddleware())
+		{
+			// 管理员 - 用户管理
+			admin.GET("/users", controllers.GetUserList)
+			admin.PATCH("/users/:id/role", controllers.UpdateUserRole)
+			admin.DELETE("/users/:id", controllers.DeleteUser)
 
-			// 管理员专用接口组
-			adminGroup := authenticated.Group("/admin")
-			adminGroup.Use(middlewares.AdminMiddleware())
-			{
-				adminGroup.GET("/users", controllers.GetUserList)
-				adminGroup.PATCH("/users/:id/role", controllers.UpdateUserRole)
-				adminGroup.DELETE("/users/:id", controllers.DeleteUser)
-			}
+			// 管理员 - 文章管理
+			admin.POST("/articles", controllers.CreateArticle)       // 只有管理员能发文章
+			admin.PUT("/articles/:id", controllers.UpdateArticle)    // 管理员编辑文章
+			admin.DELETE("/articles/:id", controllers.DeleteArticle) // 管理员删除文章
+			admin.POST("/articles/upload/cover", controllers.UploadArticleCover)
+
+			// 分类管理
+			admin.POST("/categories", controllers.CreateCategory)
+			admin.DELETE("/categories/:id", controllers.DeleteCategory)
 		}
 	}
 
 	return r
+}
+</file>
+
+<file path="services/exchange_rate_scheduler.go">
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"exchangeapp/global"
+	"exchangeapp/models"
+	"fmt"
+	"net/http"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// FetchLatestRates 拉取 USD 基准汇率
+func FetchLatestRates() (map[string]float64, error) {
+	apiKey := "acbe932332b25dafdab979b5" // 替换成你的 API Key
+	baseURL := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/latest/USD", apiKey)
+
+	resp, err := http.Get(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("请求第三方API失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("第三方API返回状态码: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Result          string             `json:"result"`
+		ConversionRates map[string]float64 `json:"conversion_rates"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析JSON失败: %v", err)
+	}
+
+	if result.Result != "success" {
+		return nil, fmt.Errorf("API返回失败: %v", result.Result)
+	}
+
+	return result.ConversionRates, nil
+}
+
+// StartExchangeRateScheduler 定时更新汇率
+func StartExchangeRateScheduler() {
+	updateRates := func() {
+		fmt.Println("开始更新汇率:", time.Now())
+		conversionRates, err := FetchLatestRates()
+		if err != nil {
+			fmt.Println("获取汇率失败:", err)
+			return
+		}
+
+		now := time.Now()
+		var rates []models.ExchangeRate
+
+		// 生成任意货币对汇率
+		for from, rateFrom := range conversionRates {
+			for to, rateTo := range conversionRates {
+				rateValue := 1.0
+				if from != to {
+					rateValue = rateTo / rateFrom
+				}
+				rates = append(rates, models.ExchangeRate{
+					FromCurrency: from,
+					ToCurrency:   to,
+					Rate:         rateValue,
+					Date:         now,
+				})
+			}
+		}
+
+		// 使用事务：先删除旧记录，再批量插入
+		err = global.Db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("DELETE FROM exchange_rates").Error; err != nil {
+				return err
+			}
+			if len(rates) > 0 {
+				if err := tx.Create(&rates).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Println("数据库更新失败:", err)
+			return
+		}
+
+		// 缓存到 Redis
+		for _, rate := range rates {
+			cacheKey := fmt.Sprintf("exchangeRate:%s:%s", rate.FromCurrency, rate.ToCurrency)
+			data, _ := json.Marshal(rate)
+			global.RedisDB.Set(context.Background(), cacheKey, data, 24*time.Hour)
+		}
+
+		fmt.Println("汇率已更新")
+	}
+
+	// 启动时立即更新一次
+	updateRates()
+
+	// 每 24 小时更新一次
+	ticker := time.NewTicker(24 * time.Hour)
+	go func() {
+		for range ticker.C {
+			updateRates()
+		}
+	}()
 }
 </file>
 
@@ -996,9 +2063,10 @@ func HashPassword(pwd string) (string, error) {
 	return string(hash), err
 }
 
-func GenerateJWT(username string) (string, error) {
+func GenerateJWT(username string, role string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": username,
+		"role":     role, // ← 加上角色
 		"exp":      time.Now().Add(time.Hour * 72).Unix(),
 	})
 
@@ -1011,12 +2079,11 @@ func CheckPassword(password string, hash string) bool {
 	return err == nil
 }
 
-func ParseJWT(tokenString string) (string, error) {
+func ParseJWT(tokenString string) (string, string, error) {
 	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
 		tokenString = tokenString[7:]
 	}
 
-	// 解析JWT
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected Signing Method")
@@ -1025,17 +2092,16 @@ func ParseJWT(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		username, ok := claims["username"].(string)
-		if !ok {
-			return "", errors.New("username claim is not a string")
-		}
-		return username, nil
+		username := claims["username"].(string)
+		role := claims["role"].(string)
+		return username, role, nil
 	}
-	return "", err
+
+	return "", "", errors.New("invalid token")
 }
 
 // ValidatePassword 校验密码复杂度
@@ -1166,6 +2232,7 @@ import (
 	"context"
 	"exchangeapp/config"
 	"exchangeapp/router"
+	"exchangeapp/services"
 	"log"
 	"net/http"
 	"os"
@@ -1178,6 +2245,9 @@ import (
 
 func main() {
 	config.InitConfig()
+
+	// 启动汇率定时任务（启动时立即获取一次汇率）
+	services.StartExchangeRateScheduler()
 
 	r := router.SetupRouter()
 
